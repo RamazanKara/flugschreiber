@@ -872,6 +872,67 @@
         }
       }
     },
+    "dashboards": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Label key the Grafana sidecar watches for. The ConfigMap carries it with value \"1\"."
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "prometheusRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Labels on the PrometheusRule object, matched by the Prometheus Operator's ruleSelector."
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "additionalLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Labels added to every alert the rule defines."
+        },
+        "archiveFailureRatio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Failure fraction among real upload attempts above which FlugschreiberArchiveUploadFailing fires."
+        },
+        "skipCRDCheck": {
+          "type": "boolean"
+        }
+      }
+    },
     "sidecar": {
       "type": "object",
       "additionalProperties": false,

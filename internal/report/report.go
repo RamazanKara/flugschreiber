@@ -49,11 +49,31 @@ type Input struct {
 	DataDir        string
 	Version        string
 	Now            time.Time
+
+	// Lang selects which language editions to produce: "en", "de", or "both".
+	// Empty means both, which is the historical behaviour.
+	Lang string
 }
 
 // Generated is the full set of documents from one run.
 type Generated struct {
 	Artifacts []Artifact
+}
+
+// Language selectors accepted by Generate and the report command.
+const (
+	LangEnglish = "en"
+	LangGerman  = "de"
+	LangBoth    = "both"
+)
+
+// ValidLang reports whether l is an accepted language selector.
+func ValidLang(l string) bool {
+	switch l {
+	case LangEnglish, LangGerman, LangBoth:
+		return true
+	}
+	return false
 }
 
 var artifacts = []struct {
@@ -63,11 +83,24 @@ var artifacts = []struct {
 	lang     string
 }{
 	{"technical-documentation.md.tmpl", "technical-documentation.md", "Annex IV technical documentation skeleton", "en"},
+	{"technical-documentation-de.md.tmpl", "technical-documentation-de.md", "Annex IV technical documentation skeleton (German)", "de"},
 	{"transparency-en.md.tmpl", "transparency-article-50-en.md", "Article 50 transparency pack (English)", "en"},
 	{"transparency-de.md.tmpl", "transparency-article-50-de.md", "Article 50 transparency pack (German)", "de"},
 }
 
-// Generate renders every artifact.
+// wants reports whether an artifact in the given language should be produced for
+// the requested selector. An empty selector means both, so an unset Input.Lang
+// keeps the historical behaviour of emitting every edition.
+func wants(selector, lang string) bool {
+	switch selector {
+	case "", LangBoth:
+		return true
+	default:
+		return selector == lang
+	}
+}
+
+// Generate renders every artifact for the requested language.
 func Generate(in Input) (*Generated, error) {
 	if in.Now.IsZero() {
 		in.Now = time.Now()
@@ -75,7 +108,12 @@ func Generate(in Input) (*Generated, error) {
 	in.Now = in.Now.UTC()
 
 	out := &Generated{}
+	var langs []string
 	for _, a := range artifacts {
+		if !wants(in.Lang, a.lang) {
+			continue
+		}
+		langs = append(langs, a.lang)
 		tmpl, err := template.New(a.template).Funcs(funcs()).ParseFS(templateFS, "templates/"+a.template)
 		if err != nil {
 			return nil, fmt.Errorf("report: parse %s: %w", a.template, err)
@@ -99,7 +137,7 @@ func Generate(in Input) (*Generated, error) {
 	for i, a := range out.Artifacts {
 		page, err := RenderHTML(a.Content, HTMLOptions{
 			Title:      a.Title,
-			Lang:       artifacts[i].lang,
+			Lang:       langs[i],
 			SourceFile: a.Filename,
 			Version:    in.Version,
 			Generated:  in.Now,

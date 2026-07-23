@@ -21,6 +21,7 @@ set -eu
 
 chart=${1:-deploy/helm/flugschreiber}
 examples=$(dirname "$chart")/../examples
+observability=$(dirname "$chart")/../observability
 
 if [ ! -f "$chart/Chart.yaml" ]; then
   echo "no chart at $chart. Run this from the repository root, or pass the chart directory." >&2
@@ -140,6 +141,16 @@ render signing-off \
   --set config.signingDisabled=true \
   --set metrics.enabled=false
 
+# The observability extras: the Grafana dashboard ConfigMap and the alerting
+# rules. The rules are CRD-guarded, so the API version is declared here the same
+# way the monitors declare it.
+render observability \
+  --set config.upstream=http://vllm.models.svc:8000 \
+  --set dashboards.enabled=true \
+  --set prometheusRule.enabled=true \
+  --set 'prometheusRule.labels.release=kube-prometheus-stack' \
+  --api-versions monitoring.coreos.com/v1
+
 echo
 echo "helm template, sidecar topology"
 
@@ -176,6 +187,7 @@ for listen in 127.0.0.1:8080 localhost:8080 '[::1]:8080'; do
   if helm template check "$sidecar_chart" \
       --set mode=sidecar \
       --set config.upstream=http://vllm.models.svc:8000 \
+      --set persistence.existingClaim=app-evidence \
       --set sidecar.nativeSidecar=true \
       --set "sidecar.listen=$listen" >"$out/$name.yaml" 2>"$out/$name.err"; then
     # The URL the application is told to use has to name the address the
@@ -194,6 +206,16 @@ for listen in 127.0.0.1:8080 localhost:8080 '[::1]:8080'; do
     fail=1
   fi
 done
+
+# The verify and retention CronJobs render in sidecar mode too, so a broken
+# chain still pages someone. The chart cannot guess the application pod's
+# evidence volume, so the render is only valid against a claim the operator
+# names, and both Jobs mount exactly that claim.
+render sidecar-cronjobs \
+  --set mode=sidecar \
+  --set config.upstream=http://vllm.models.svc:8000 \
+  --set persistence.existingClaim=app-evidence \
+  --set retention.enabled=true
 
 echo
 echo "renders that must be refused"
@@ -232,6 +254,21 @@ refuse empty-secret 'no credential would be written' \
 
 refuse verify-without-persistence 'verify an empty chain' \
   --set config.upstream=http://vllm.models.svc:8000 --set persistence.enabled=false
+
+# A sidecar CronJob with no claim to mount would prune or verify an emptyDir.
+refuse sidecar-cronjob-without-claim 'persistence.existingClaim' \
+  --set mode=sidecar --set config.upstream=http://vllm.models.svc:8000
+
+# Alerting rules over metrics the proxy would not be serving sit on absent data.
+refuse prometheusrule-without-metrics 'absent data' \
+  --set config.upstream=http://vllm.models.svc:8000 \
+  --set prometheusRule.enabled=true --set metrics.enabled=false \
+  --api-versions monitoring.coreos.com/v1
+
+# The rule needs the CRD, and says so rather than dropping the alerts silently.
+refuse prometheusrule-without-crd 'monitoring.coreos.com/v1 is not present' \
+  --set config.upstream=http://vllm.models.svc:8000 \
+  --set prometheusRule.enabled=true
 
 echo
 echo "credentials stay out of the ConfigMap"
@@ -278,6 +315,22 @@ present full 'signing state is stated on the pod' 'name: FLUGSCHREIBER_SIGNING_D
 present full 'metrics state is stated on the pod' 'name: FLUGSCHREIBER_METRICS_ENABLED'
 present full 'checkpoint interval in the config file' '"checkpoint_interval": "1m"'
 
+present sidecar-cronjobs 'verify CronJob renders in sidecar mode' 'name: check-flugschreiber-verify'
+present sidecar-cronjobs 'retention CronJob renders in sidecar mode' 'name: check-flugschreiber-retention'
+present sidecar-cronjobs 'sidecar CronJobs mount the named claim' 'claimName: app-evidence'
+
+present observability 'dashboard ConfigMap renders' 'name: check-flugschreiber-dashboard'
+present observability 'dashboard carries the Grafana sidecar label' 'grafana_dashboard: "1"'
+present observability 'dashboard JSON is embedded with real metric names' 'flugschreiber_requests_total'
+present observability 'PrometheusRule renders' 'kind: PrometheusRule'
+present observability 'rule carries the ruleSelector label' 'release: kube-prometheus-stack'
+present observability 'capture-errors alert present' 'alert: FlugschreiberCaptureErrors'
+present observability 'archive-failure alert present' 'alert: FlugschreiberArchiveUploadFailing'
+present observability 'capture-stall alert present' 'alert: FlugschreiberCaptureStalled'
+# The alert annotations use Prometheus templating, which Helm must pass through
+# untouched rather than evaluate as its own.
+present observability 'prometheus templating survives helm rendering' '{{ $labels.instance }}'
+
 # The name alone would pass with any value, and the value is the whole point.
 env_is() {
   file=$1
@@ -297,6 +350,19 @@ env_is signing-off FLUGSCHREIBER_SIGNING_DISABLED true
 env_is signing-off FLUGSCHREIBER_METRICS_ENABLED false
 env_is minimal FLUGSCHREIBER_SIGNING_DISABLED false
 env_is minimal FLUGSCHREIBER_METRICS_ENABLED true
+
+echo
+echo "the shipped dashboard matches the canonical one"
+
+# Helm's .Files.Get cannot read outside the chart, so the dashboard ConfigMap
+# carries a copy under the chart. The canonical file is
+# deploy/observability/grafana-dashboard.json, and the two must not drift.
+if diff "$chart/dashboards/flugschreiber.json" "$observability/grafana-dashboard.json" >/dev/null 2>&1; then
+  echo "  ok    chart dashboard equals deploy/observability/grafana-dashboard.json"
+else
+  echo "  FAIL  $chart/dashboards/flugschreiber.json has drifted from $observability/grafana-dashboard.json"
+  fail=1
+fi
 
 echo
 echo "kubeconform"

@@ -195,6 +195,23 @@ func (c *Capturer) ToolArguments(args string) (text, digest string) {
 	}
 }
 
+// ToolResultPayload renders a tool result at the configured fidelity. A tool
+// result is what a tool returned to the model, sent back by the caller in a
+// later turn; it is as sensitive as a prompt, so it follows the same rules as
+// ToolArguments. The SHA-256 and byte count are computed over the content in
+// every mode, so the digest holds even when no text is stored; the content text
+// is retained only in store mode, redacted in redact mode, and dropped entirely
+// in hash mode.
+func (c *Capturer) ToolResultPayload(callID, content string) evidence.ToolResult {
+	text, digest := c.ToolArguments(content)
+	return evidence.ToolResult{
+		CallID:  callID,
+		SHA256:  digest,
+		Bytes:   len(content),
+		Content: text,
+	}
+}
+
 func merge(dst *map[string]int, src map[string]int) {
 	if len(src) == 0 {
 		return

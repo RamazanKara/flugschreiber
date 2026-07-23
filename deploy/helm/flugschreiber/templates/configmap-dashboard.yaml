@@ -1,0 +1,29 @@
+{{- if .Values.dashboards.enabled }}
+{{- /*
+The Grafana dashboard as a ConfigMap, carrying the exact JSON from
+deploy/observability/grafana-dashboard.json (the chart keeps a copy under
+dashboards/ because Helm's .Files.Get cannot read outside the chart; check.sh
+fails if the two ever differ). The Grafana sidecar discovers dashboards by a
+label rather than by namespace, so dashboards.label is the label key it watches.
+This is a plain ConfigMap in either topology, since a dashboard describes
+metric names and does not depend on where the recorder runs.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}-dashboard
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+    {{ .Values.dashboards.label }}: "1"
+    {{- with .Values.dashboards.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  flugschreiber.json: |-
+{{ .Files.Get "dashboards/flugschreiber.json" | indent 4 }}
+{{- end }}

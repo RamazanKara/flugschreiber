@@ -184,3 +184,31 @@ func TestDurationRoundTripsThroughJSON(t *testing.T) {
 		t.Errorf("a bare number should be read as seconds, got %v", c.ShutdownTimeout.Std())
 	}
 }
+
+func TestUpstreamsRejectUnknownEndpointKind(t *testing.T) {
+	c := Default()
+	c.Upstream = ""
+	c.Upstreams = []UpstreamRoute{
+		{Name: "chat", URL: "http://vllm:8000", Endpoints: []string{"chat"}, Default: true},
+		// "embeddings" is the plural typo that would silently never match.
+		{Name: "embed", URL: "http://tei:8080", Endpoints: []string{"embeddings"}},
+	}
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("a route with an unknown endpoint kind was accepted")
+	}
+	if !strings.Contains(err.Error(), "embeddings") {
+		t.Errorf("error does not name the offending kind: %v", err)
+	}
+}
+
+func TestUpstreamsRejectCAAndSkipTogether(t *testing.T) {
+	c := Default()
+	c.Upstream = ""
+	c.Upstreams = []UpstreamRoute{
+		{Name: "r", URL: "https://vllm:8000", CAFile: "/ca.pem", TLSSkip: true, Default: true},
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("a route setting both a CA file and skip-verify was accepted")
+	}
+}

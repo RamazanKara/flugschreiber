@@ -1,5 +1,5 @@
-{{- if eq .Values.mode "central" }}
 {{- if .Values.retention.enabled }}
+{{- include "flugschreiber.validate" . -}}
 {{- $r := .Values.retention }}
 apiVersion: batch/v1
 kind: CronJob
@@ -107,5 +107,4 @@ spec:
           affinity:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-{{- end }}
 {{- end }}

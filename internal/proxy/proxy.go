@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,8 +43,7 @@ type Server struct {
 	store    *evidence.Store
 	capturer *content.Capturer
 	salt     []byte
-	upstream *url.URL
-	rp       *httputil.ReverseProxy
+	router   *router
 	log      *slog.Logger
 	metrics  *metrics.Metrics
 
@@ -69,6 +67,15 @@ type capture struct {
 	kind      string
 	method    string
 	start     time.Time
+
+	// upstream names the route that served the request, recorded verbatim in the
+	// evidence record. It is empty when no route matched.
+	upstream string
+
+	// modelPeekTruncated is set when the model could not be found within the
+	// bounded body peek, so the record is marked truncated rather than silently
+	// routed on an empty model.
+	modelPeekTruncated bool
 
 	reqTap  *tap
 	respTap *tap
@@ -104,17 +111,32 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 		}),
 	}
 
-	s.upstream, err = url.Parse(cfg.Upstream)
-	if err != nil {
-		return nil, fmt.Errorf("proxy: parse upstream: %w", err)
-	}
-
-	transport, err := newTransport(cfg)
+	router, err := newRouter(s, cfg)
 	if err != nil {
 		return nil, err
 	}
-	s.rp = &httputil.ReverseProxy{
-		Rewrite:        s.rewrite,
+	s.router = router
+	return s, nil
+}
+
+// buildReverseProxy wires one route's reverse proxy. Rewrite is per route so
+// each honours its own URL and API key; ModifyResponse and ErrorHandler are the
+// shared capture hooks, keyed off the request context, so recording is
+// identical whichever route served the request.
+func (s *Server) buildReverseProxy(r *route, transport http.RoundTripper) *httputil.ReverseProxy {
+	upstream, apiKey := r.upstream, r.apiKey
+	return &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(upstream)
+			pr.Out.Host = upstream.Host
+			pr.SetXForwarded()
+			if apiKey != "" && pr.In.Header.Get("Authorization") == "" {
+				pr.Out.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+			// Ask the upstream not to compress, matching the transport setting,
+			// so the recorded bytes stay readable.
+			pr.Out.Header.Set("Accept-Encoding", "identity")
+		},
 		ModifyResponse: s.modifyResponse,
 		ErrorHandler:   s.errorHandler,
 		// A negative flush interval flushes each write immediately, which is
@@ -122,12 +144,14 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 		// being buffered until the response ends.
 		FlushInterval: -1,
 		Transport:     transport,
-		ErrorLog:      slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+		ErrorLog:      slog.NewLogLogger(s.log.Handler(), slog.LevelWarn),
 	}
-	return s, nil
 }
 
-func newTransport(cfg config.Config) (http.RoundTripper, error) {
+// newTransport builds the HTTP transport for one route, honouring that route's
+// own CA bundle and skip-verify setting so upstreams behind different
+// certificate authorities coexist.
+func newTransport(cfg config.Config, caFile string, tlsSkip bool) (http.RoundTripper, error) {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.MaxIdleConnsPerHost = 64
 	t.IdleConnTimeout = 90 * time.Second
@@ -137,19 +161,19 @@ func newTransport(cfg config.Config) (http.RoundTripper, error) {
 	// decompressor waiting for a block boundary.
 	t.DisableCompression = true
 
-	if cfg.UpstreamCAFile != "" || cfg.UpstreamTLSSkipVerify {
+	if caFile != "" || tlsSkip {
 		tlsCfg := &tls.Config{}
-		if cfg.UpstreamCAFile != "" {
+		if caFile != "" {
 			pool, err := x509.SystemCertPool()
 			if err != nil {
 				pool = x509.NewCertPool()
 			}
-			pemBytes, err := os.ReadFile(cfg.UpstreamCAFile)
+			pemBytes, err := os.ReadFile(caFile)
 			if err != nil {
-				return nil, fmt.Errorf("proxy: read upstream CA %s: %w", cfg.UpstreamCAFile, err)
+				return nil, fmt.Errorf("proxy: read upstream CA %s: %w", caFile, err)
 			}
 			if !pool.AppendCertsFromPEM(pemBytes) {
-				return nil, fmt.Errorf("proxy: %s contains no usable PEM certificates", cfg.UpstreamCAFile)
+				return nil, fmt.Errorf("proxy: %s contains no usable PEM certificates", caFile)
 			}
 			tlsCfg.RootCAs = pool
 		}
@@ -157,7 +181,7 @@ func newTransport(cfg config.Config) (http.RoundTripper, error) {
 		// answered the socket. The caller has been warned at startup; the
 		// setting still has to work, because the alternative operators reach
 		// for is plaintext.
-		tlsCfg.InsecureSkipVerify = cfg.UpstreamTLSSkipVerify
+		tlsCfg.InsecureSkipVerify = tlsSkip
 		t.TLSClientConfig = tlsCfg
 	}
 	return t, nil
@@ -213,7 +237,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	kind := openai.ClassifyPath(r.URL.Path)
 	if kind == openai.EndpointOther || r.Method != http.MethodPost {
-		s.rp.ServeHTTP(w, r)
+		// Traffic the proxy does not record (model lists, non-POST calls) carries
+		// no model to route on, so it goes to the default upstream.
+		s.router.def.rp.ServeHTTP(w, r)
 		return
 	}
 
@@ -229,25 +255,46 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		respTap:   newTap(prefixBytes),
 	}
 
+	// Routing needs the model, which lives in the request body, before we can
+	// dial. Peek a bounded prefix to read it, then rebuild the body so what the
+	// upstream receives, and any stream that follows, is byte-for-byte the
+	// original. See modelPeekCap and DECISIONS D33.
+	model, peekTrunc, prefix, body := peekModel(r.Body)
+	r.Body = body
+	c.modelPeekTruncated = peekTrunc
+
+	rt := s.router.selectRoute(model, kind)
+	if rt == nil {
+		// No route matched and no default is configured. The attempt is still
+		// evidence: record it, then answer 502 like any other upstream failure.
+		c.status = http.StatusBadGateway
+		if len(prefix) > 0 {
+			// Feed the peeked prefix through the tap so the record still names the
+			// model that had no route, even though nothing forwarded the body.
+			_, _ = c.reqTap.Write(prefix)
+		}
+		w.Header().Set("X-Flugschreiber-Request-Id", c.requestID)
+		s.finish(c, nil, noRouteError(model, kind))
+		http.Error(w, "no upstream route matched the request", http.StatusBadGateway)
+		return
+	}
+	c.upstream = rt.label
+
 	if r.Body != nil {
 		r.Body = &teeReadCloser{rc: r.Body, w: c.reqTap}
 	}
 
 	w.Header().Set("X-Flugschreiber-Request-Id", c.requestID)
-	s.rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), captureKey{}, c)))
+	rt.rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), captureKey{}, c)))
 }
 
-func (s *Server) rewrite(pr *httputil.ProxyRequest) {
-	pr.SetURL(s.upstream)
-	pr.Out.Host = s.upstream.Host
-	pr.SetXForwarded()
-
-	if s.cfg.UpstreamAPIKey != "" && pr.In.Header.Get("Authorization") == "" {
-		pr.Out.Header.Set("Authorization", "Bearer "+s.cfg.UpstreamAPIKey)
+// noRouteError describes an interaction that reached no upstream, for the
+// evidence record's Error field.
+func noRouteError(model, kind string) error {
+	if model == "" {
+		return fmt.Errorf("no upstream route for the %s endpoint (request carried no model)", kind)
 	}
-	// Ask the upstream not to compress, matching the transport setting, so the
-	// recorded bytes stay readable.
-	pr.Out.Header.Set("Accept-Encoding", "identity")
+	return fmt.Errorf("no upstream route for model %q on the %s endpoint", model, kind)
 }
 
 func (s *Server) modifyResponse(resp *http.Response) error {
@@ -317,23 +364,24 @@ func (s *Server) finish(c *capture, resp *http.Response, streamErr error) {
 	}
 
 	ev := &evidence.Event{
-		SchemaVersion:  evidence.SchemaVersion,
-		EventType:      evidence.EventInference,
-		RequestID:      c.requestID,
-		SessionID:      c.sessionID,
-		ClientHash:     c.clientID,
-		Endpoint:       c.endpoint,
-		Method:         c.method,
-		Upstream:       s.upstreamLabel(),
-		ModelRequested: parsedReq.Model,
-		ModelServed:    parsedResp.Model,
-		UpstreamRespID: parsedResp.ID,
-		Params:         parsedReq.Params,
-		Usage:          parsedResp.Usage,
-		Stream:         streamed,
-		FinishReasons:  parsedResp.FinishReasons,
-		Status:         c.status,
-		LatencyMS:      msSince(c.start),
+		SchemaVersion:      evidence.SchemaVersion,
+		EventType:          evidence.EventInference,
+		RequestID:          c.requestID,
+		SessionID:          c.sessionID,
+		ClientHash:         c.clientID,
+		Endpoint:           c.endpoint,
+		Method:             c.method,
+		Upstream:           c.upstream,
+		ModelRequested:     parsedReq.Model,
+		ModelServed:        parsedResp.Model,
+		UpstreamRespID:     parsedResp.ID,
+		UpstreamPreviousID: parsedReq.PreviousID,
+		Params:             parsedReq.Params,
+		Usage:              parsedResp.Usage,
+		Stream:             streamed,
+		FinishReasons:      parsedResp.FinishReasons,
+		Status:             c.status,
+		LatencyMS:          msSince(c.start),
 	}
 	if c.ttfb > 0 {
 		ev.TTFBMS = float64(c.ttfb.Microseconds()) / 1000
@@ -356,8 +404,16 @@ func (s *Server) finish(c *capture, resp *http.Response, streamErr error) {
 		})
 	}
 
+	// Tool results the caller sent back are as sensitive as prompts, so they
+	// take the same content mode: a digest and byte count always, the text only
+	// when the mode stores content.
+	for _, tr := range parsedReq.ToolResults {
+		ev.ToolResults = append(ev.ToolResults, s.capturer.ToolResultPayload(tr.CallID, tr.Content))
+	}
+
 	input := s.capturer.Payload(reqPrefix, parsedReq.Text, parsedReq.Messages)
-	input.SHA256, input.Bytes, input.Truncated = reqSum, int(reqBytes), reqTrunc || input.Truncated
+	input.SHA256, input.Bytes = reqSum, int(reqBytes)
+	input.Truncated = reqTrunc || input.Truncated || c.modelPeekTruncated
 	output := s.capturer.Payload(respPrefix, parsedResp.Text, nil)
 	output.SHA256, output.Bytes, output.Truncated = respSum, int(respBytes), respTrunc || output.Truncated
 
@@ -388,18 +444,6 @@ func (s *Server) finish(c *capture, resp *http.Response, streamErr error) {
 		return
 	}
 	s.metrics.EventAppended()
-}
-
-// upstreamLabel records where traffic went without leaking any credential that
-// might be embedded in the configured URL.
-func (s *Server) upstreamLabel() string {
-	if s.cfg.MockUpstream {
-		return "mock-upstream"
-	}
-	if s.upstream == nil {
-		return ""
-	}
-	return s.upstream.Scheme + "://" + s.upstream.Host + s.upstream.Path
 }
 
 func msSince(t time.Time) float64 {

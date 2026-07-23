@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ramazankara.github.io/flugschreiber/schema/record.schema.json",
+  "title": "Flugschreiber evidence record",
+  "description": "One line of an evidence segment, as written by internal/evidence/record.go at schema version 1. The event is hashed as the exact bytes that were written, so a verifier compiled today can still check a chain written by a future version. See docs/SCHEMA.md for the hash construction and the compatibility policy.",
+  "type": "object",
+  "required": [
+    "seq",
+    "timestamp",
+    "prev_hash",
+    "record_hash",
+    "event"
+  ],
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic sequence number, starting at 1 and contiguous across the whole log."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 with nanoseconds, UTC."
+    },
+    "prev_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "record_hash of the previous record, or 64 zeros for the first record in a chain."
+    },
+    "record_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 over the domain-separated preimage documented in docs/SCHEMA.md."
+    },
+    "event": {
+      "$ref": "event.schema.json",
+      "description": "The event payload. Hashed as raw bytes, so the chain is independent of the schema version a reader was compiled against."
+    }
+  }
+}

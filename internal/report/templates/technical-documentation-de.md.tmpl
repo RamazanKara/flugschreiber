@@ -1,0 +1,365 @@
+{{- $s := .Summary -}}
+# Technische Dokumentation: {{ fill .Deployment.SystemName "Benennen Sie das KI-System, dem dieser Proxy vorgeschaltet ist, so wie es in Ihrer Organisation bekannt ist" }}
+
+Erstellt von Flugschreiber {{ .Version }} am {{ stamp .Now }} aus beobachtetem Verkehr in `{{ .DataDir }}`.
+
+> **Dies ist ein Gerüst, kein Konformitätsdokument.** Mit *beobachtet* gekennzeichnete
+> Abschnitte sind aus Nachweisen befüllt, die Flugschreiber tatsächlich aufgezeichnet hat.
+> Alles mit **TODO** verlangt einen Menschen, der das System und seinen Anwendungsfall
+> versteht. Flugschreiber kann diese Dinge nicht wissen und rät nicht.
+>
+> Dieses Dokument ist keine Rechtsberatung. Ein LLM ist nicht per se ein Hochrisikosystem.
+> Die Pflichten der KI-Verordnung knüpfen an den *Anwendungsfall* an, nicht an die
+> Technologie. Ob Anhang III auf dieses System zutrifft, müssen Sie selbst feststellen;
+> dieses Dokument ist wie Anhang IV aufgebaut, damit es nützlich ist, wenn er zutrifft,
+> und harmlos, wenn nicht.
+
+## Dokumentenkontrolle
+
+| Feld | Wert |
+| --- | --- |
+| Systemname | {{ fill .Deployment.SystemName "der interne oder Produktname des KI-Systems" }} |
+| Organisation | {{ fill .Deployment.Organisation "die juristische Person, die dieses System betreibt" }} |
+| Rolle nach der KI-Verordnung | {{ fill .Deployment.Role "Anbieter, Betreiber, Einführer oder Händler. Davon hängt ab, welche Pflichten für Sie gelten" }} |
+| Umgebung | {{ fill .Deployment.Environment "Produktion, Staging oder die Umgebung, aus der dieser Nachweis stammt" }} |
+| Ansprechstelle | {{ fill .Deployment.Contact "die Person oder das Team, das für dieses System verantwortlich ist" }} |
+| Nachweiszeitraum | {{ $s.Window }} |
+| Erfasste Aufzeichnungen | {{ $s.Records }} ({{ $s.Inference }} Inferenz-Ereignisse) |
+| Integrität | {{ if $s.ChainVerified }}Hash-Kette als unversehrt geprüft{{ else }}**PRÜFUNG FEHLGESCHLAGEN, siehe Abschnitt 3.4**{{ end }} |
+
+---
+
+## 1. Allgemeine Beschreibung des KI-Systems
+
+### 1.1 Zweckbestimmung
+
+{{ fill .Deployment.Purpose "Beschreiben Sie, wofür dieses System dient, wer es nutzt und welche Entscheidungen es vorbereitet oder trifft. Dies ist der wichtigste Satz des Dokuments: Die Zweckbestimmung entscheidet darüber, ob das System überhaupt unter Anhang III fällt." }}
+
+{{ todo "Legen Sie ausdrücklich fest, wofür das System *nicht* bestimmt ist und welche Nutzung Sie ausgeschlossen haben. Auch vernünftigerweise vorhersehbarer Fehlgebrauch gehört hierher." }}
+
+### 1.2 Beobachtete Modelle und Versionen
+
+{{ if $s.Observed -}}
+*Beobachtet.* Im Nachweiszeitraum wurden von Aufrufern die folgenden Modellkennungen
+angefragt und vom Upstream als bereitgestellt gemeldet:
+
+| Modell angefragt | Modell bereitgestellt | Anfragen | Gestreamt | Fehler | Prompt-Token | Completion-Token |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+{{ range $s.Models -}}
+| `{{ orNA .Requested }}` | `{{ orNA .Served }}` | {{ .Requests }} | {{ .Streamed }} | {{ .Errors }} | {{ .PromptTokens }} | {{ .CompletionTokens }} |
+{{ end }}
+{{ if $s.Substituted -}}
+In mindestens einem Fall weicht die bereitgestellte Kennung von der angefragten ab: Der
+Upstream hat ein Modell ausgetauscht. Dieser Austausch gehört mit seiner Begründung in
+dieses Dokument.
+{{- end }}
+{{- else -}}
+In diesem Nachweisverzeichnis wurde kein Inferenzverkehr aufgezeichnet, daher ist hier
+nichts vorauszufüllen.
+
+{{ todo "Führen Sie jedes Modell und jede Version auf, die das System verwendet, einschließlich der genauen Gewichte oder des Tags, und woher sie stammen." }}
+{{- end }}
+
+{{ todo "Halten Sie für jedes Modell oben fest: seine Herkunft (Anbieter, Open-Weights-Repository, internes Fine-Tuning), die in Ihrer Installation festgelegte Version oder Prüfsumme und die Lizenz, unter der es genutzt wird. Flugschreiber sieht die von der API gemeldete Kennung, die nicht immer dem tatsächlich bereitgestellten Artefakt entspricht." }}
+
+### 1.3 Systemarchitektur und Schnittstellen
+
+{{ if $s.Observed -}}
+*Beobachtet.* Aufrufer erreichten die folgenden API-Endpunkte über Flugschreiber:
+
+| Endpunkt | Anfragen |
+| --- | ---: |
+{{ range $s.Endpoints -}}
+| `{{ .Name }}` | {{ .Count }} |
+{{ end }}
+Der Verkehr wurde weitergeleitet an: {{ joinCounts $s.Upstreams }}.
+
+{{ if gt $s.Streamed 0 -}}
+{{ pct $s.Streamed $s.Inference }} der Inferenz-Anfragen nutzten Server-Sent-Event-Streaming.
+Gestreamte Antworten werden wieder zusammengesetzt und als die vollständige Nachricht
+aufgezeichnet, die der Aufrufer erhalten hat.
+{{- end }}
+{{- else -}}
+{{ todo "Beschreiben Sie die Schnittstellen, über die das System genutzt wird, und wie es mit anderer Software verbunden ist." }}
+{{- end }}
+
+{{ todo "Beschreiben Sie, was vor der Anwendung und was hinter dem Modell liegt: Authentifizierung, Abrufquellen, Werkzeug-Integrationen, nachgelagerte Systeme, die die Ausgabe verarbeiten, und jeden Schritt menschlicher Prüfung. Flugschreiber sieht nur die Grenze der Modell-API." }}
+
+### 1.4 Bereitstellungsform und Hardware
+
+{{ todo "Geben Sie an, wie das System bereitgestellt wird (Container, Kubernetes, VM), auf welcher Hardware es läuft und in welcher Jurisdiktion diese Hardware steht. Läuft die Inferenz auf Infrastruktur, die Sie nicht kontrollieren, benennen Sie den Betreiber." }}
+
+---
+
+## 2. Bestandteile des Systems und Entwicklungsprozess
+
+### 2.1 Verwendete Generierungsparameter
+
+{{ if $s.Params -}}
+*Beobachtet.* Aufrufer setzten die folgenden Generierungsparameter:
+
+| Parameter | Beobachteter Bereich | Anfragen |
+| --- | --- | ---: |
+{{ range $s.Params -}}
+| `{{ .Name }}` | {{ .String }} | {{ .Count }} |
+{{ end }}
+{{- else -}}
+Es wurden keine ausdrücklichen Generierungsparameter beobachtet; die Aufrufer verließen
+sich auf die Voreinstellungen des Upstreams.
+
+{{ todo "Halten Sie die voreingestellten Sampling-Parameter des Upstreams fest, denn das sind die tatsächlich wirksamen Parameter." }}
+{{- end }}
+
+### 2.2 Werkzeuge und Funktionsaufrufe
+
+{{ if or $s.ToolsOffered $s.ToolsCalled -}}
+*Beobachtet.*
+
+{{ if $s.ToolsOffered -}}
+Dem Modell angebotene Werkzeuge: {{ names $s.ToolsOffered }}.
+{{ end }}
+{{ if $s.ToolsCalled -}}
+Vom Modell tatsächlich aufgerufene Werkzeuge: {{ joinCounts $s.ToolsCalled }}.
+{{- else -}}
+Im Nachweiszeitraum wurden im Antwortstrom keine Werkzeugaufrufe aufgezeichnet.
+{{- end }}
+
+{{ todo "Dokumentieren Sie für jedes Werkzeug oben, was es tun kann, worauf es zugreifen kann und ob seine Wirkungen umkehrbar sind. Ein Modell, das ein Werkzeug aufrufen kann, das in ein Produktivsystem schreibt, ist ein wesentlich anderes Risikobild als eines, das nur lesen kann." }}
+{{- else -}}
+Im Nachweiszeitraum wurden keine Werkzeug- oder Funktionsaufrufe beobachtet.
+{{- end }}
+
+### 2.3 Vom System verwendete Daten
+
+{{ todo "Beschreiben Sie die Daten, die das System zur Inferenzzeit verarbeitet: was Nutzer übermitteln, was abgerufen und als Kontext eingefügt wird und was die Grenze verlässt. Wurde das System feinabgestimmt oder mit einem Abrufkorpus genutzt, beschreiben Sie diese Datensätze, ihre Herkunft und ihre Lizenzierung. Flugschreiber zeichnet Verkehr auf, keine Trainingsdaten, daher lässt sich dieser Abschnitt nicht generieren." }}
+
+{{ todo "Halten Sie fest, ob personenbezogene Daten verarbeitet werden, die Rechtsgrundlage nach der DSGVO und den Verweis auf die Datenschutz-Folgenabschätzung, falls eine vorliegt. Was Flugschreiber selbst speichert, steht in Abschnitt 3.2." }}
+
+### 2.4 Entwicklungsprozess und Validierung
+
+{{ todo "Beschreiben Sie, wie das System gebaut wurde und wie Änderungen daran geprüft und ausgeliefert werden. Verweisen Sie auf Ihr Repository, Ihre CI-Pipeline und Ihren Release-Prozess, statt sie zu wiederholen." }}
+
+{{ todo "Beschreiben Sie die vor dem Einsatz durchgeführten Tests und ihre Ergebnisse." }}
+
+---
+
+## 3. Überwachung, Funktionsweise und Kontrolle
+
+### 3.1 Protokollierung (Artikel 12 und Artikel 19)
+
+*Beobachtet.* Flugschreiber zeichnet pro Modellinteraktion ein strukturiertes,
+hash-verkettetes Ereignis auf. Im Nachweiszeitraum erfasste es:
+
+| Größe | Wert |
+| --- | --- |
+| Aufzeichnungen gesamt | {{ $s.Records }} |
+| Inferenz-Ereignisse | {{ $s.Inference }} |
+| Verschiedene aufrufende Identitäten | {{ $s.DistinctClients }} (als gesalzene Hashes gespeichert, nicht als Zugangsdaten) |
+| Verschiedene Sitzungen | {{ $s.DistinctSessions }} |
+| Anfragen mit Fehlern | {{ $s.Errors }} ({{ pct $s.Errors $s.Inference }}) |
+| Prompt-Token | {{ $s.PromptTokens }} |
+| Completion-Token | {{ $s.CompletionTokens }} |
+| Mediane Ende-zu-Ende-Latenz | {{ ms $s.LatencyP50 }} |
+| 95. Perzentil der Latenz | {{ ms $s.LatencyP95 }} |
+| Aufgezeichnete Ereignistypen | {{ joinCounts $s.EventTypes }} |
+{{ if $s.Statuses }}| HTTP-Statuscodes | {{ joinCounts $s.Statuses }} |{{ end }}
+{{ if $s.FinishReasons }}| Abschlussgründe | {{ joinCounts $s.FinishReasons }} |{{ end }}
+
+Jede Aufzeichnung trägt: einen RFC3339-Zeitstempel, eine monotone Folgenummer, Anfrage-
+und Sitzungskennungen, das angefragte und bereitgestellte Modell, den Endpunkt und den
+Upstream, Generierungsparameter, Token-Verbrauch, Latenz, HTTP-Status, einen gesalzenen
+Hash der aufrufenden Identität und die in 3.2 beschriebene Inhaltsaufzeichnung.
+
+{{ todo "Artikel 12 verlangt eine dem Zweck angemessene Protokollierung. Bestätigen Sie, dass die obigen Felder für Ihren Anwendungsfall ausreichen, und halten Sie hier fest, was Sie andernorts protokollieren und Flugschreiber nicht sieht, etwa die anwendungsseitige Nutzeridentität oder die in einen Prompt eingefügten Abrufdokumente." }}
+
+### 3.2 Was vom Inhalt selbst aufgezeichnet wird
+
+*Beobachtet.* Der aktive Inhaltsmodus ist **`{{ .ContentMode }}`**.
+{{ if $s.ContentModes }}Im aufgezeichneten Zeitraum gesehene Modi: {{ joinCounts $s.ContentModes }}.{{ end }}
+
+- `hash`: Es wird ein SHA-256 der exakten Anfrage- und Antwortbytes aufgezeichnet; kein
+  Prompt- oder Completion-Text wird aufbewahrt. Dies ist die Voreinstellung, gewählt zur
+  Datenminimierung nach Artikel 5 Absatz 1 Buchstabe c DSGVO: Ein Proxy, der jeden Prompt
+  voreingestellt speichert, würde eine neue Kopie dessen anlegen, was Nutzer eingeben, in
+  einem System, das dafür nicht ausgelegt war.
+- `redact`: Text wird aufbewahrt, wobei konfigurierte Muster ersetzt werden.
+  {{ if .RedactPatterns }}Aktive Muster: `{{ join "`, `" .RedactPatterns }}`.{{ end }}
+  Musterbasierte Schwärzung ist ihrer Natur nach nur bestmöglich; freier Text kann
+  personenbezogene Daten in Formen tragen, die kein regulärer Ausdruck erfasst.
+- `store`: Der vollständige Anfrage- und Antworttext wird aufbewahrt.
+
+In jedem Modus wird der SHA-256 über die vollständigen Bytes berechnet, die über die
+Leitung gingen. Genau das erlaubt es, ein andernorts gehaltenes Transkript als das
+Transkript der Interaktion nachzuweisen, die dieses Protokoll bezeugt, selbst wenn das
+Protokoll selbst keinen Text enthält.
+
+{{ todo "Halten Sie fest, warum der gewählte Inhaltsmodus hier angemessen ist und wo die zugehörigen Aufbewahrungs- und Zugriffskontrollen dokumentiert sind." }}
+
+### 3.3 Aufbewahrung
+
+*Beobachtet.* Konfigurierte Aufbewahrung: **{{ .RetentionDays }} Tage** (~{{ months .RetentionDays }} Monate).
+
+Artikel 19 erwartet, dass automatisch erzeugte Protokolle mindestens sechs Monate
+aufbewahrt werden, soweit sie der Kontrolle des Anbieters unterliegen und vorbehaltlich
+sonstigen anwendbaren Rechts. Flugschreiber verweigert den Start mit einer Aufbewahrung
+unter 180 Tagen.
+
+{{ if $s.Pruned -}}
+Dieses Protokoll wurde beschnitten: Aufzeichnungen bis Folgenummer {{ $s.PrunedThroughSeq }}
+wurden gemäß der Aufbewahrungsrichtlinie gelöscht, und `pruned.json` hält diese Löschung
+fest, sodass die verbleibende Kette weiterhin verifiziert. Das Protokoll ist seit dieser
+Beschneidung unverändert und nicht von Anfang an vollständig; das sind unterschiedliche
+Aussagen, und hier wird nur die erste getroffen.
+{{- end }}
+
+Die Durchsetzung erfolgt mit `flugschreiber retention --enforce --confirm`, das nur ganze
+Segmente löscht, älteste zuerst, und nur dann, wenn jede Aufzeichnung darin außerhalb des
+Aufbewahrungszeitraums liegt. Eine Datei `LEGAL_HOLD` im Nachweisverzeichnis blockiert
+jede Löschung, solange sie existiert. Ohne diese beiden ausdrücklichen Schalter löscht
+nichts Nachweise, ob von einer Person eingegeben oder als Job geplant.
+
+{{ todo "Halten Sie fest, wo das Nachweisverzeichnis gespeichert ist, wer es lesen kann, wie es gesichert wird und wer oder was die Aufbewahrung in welchem Turnus durchsetzt. Läuft nichts, sammeln sich Aufzeichnungen über den Aufbewahrungszeitraum hinaus an, bis etwas läuft, was eine Frage der Datenminimierung ist, keine des Werkzeugs." }}
+
+### 3.4 Integritätsmechanismus
+
+*Beobachtet.* Jede Aufzeichnung trägt den SHA-256 ihres Vorgängers und einen SHA-256 ihres
+eigenen Inhalts und bildet so eine Kette. Das Ändern, Einfügen oder Entfernen einer
+Aufzeichnung bricht die Kette an dieser Stelle und an jeder Stelle danach.
+
+| Größe | Wert |
+| --- | --- |
+| Prüfergebnis | {{ if $s.ChainVerified }}**unversehrt**, jeder Aufzeichnungs-Hash und jede Verkettung geprüft{{ else }}**FEHLGESCHLAGEN**{{ end }} |
+| Segmente | {{ len $s.Segments }} ({{ join ", " $s.Segments }}) |
+| Hash des Kettenkopfs | `{{ orNA $s.HeadHash }}` |
+| Signierte Kontrollpunkte | {{ if gt $s.Checkpoints 0 }}{{ $s.Checkpoints }}, davon {{ $s.CheckpointsVerified }} gegen Signatur und Kette geprüft{{ else }}keine aufgezeichnet{{ end }} |
+| Beglaubigung | {{ if $s.Attested }}**beglaubigt**: mindestens eine Ed25519-Kontrollpunktsignatur wurde geprüft und stimmt mit der Kette überein{{ else }}nicht beglaubigt; die Kette zeigt nur innere Widerspruchsfreiheit{{ end }} |
+| Kennung des Signaturschlüssels | {{ if $s.KeyID }}`{{ $s.KeyID }}`{{ else }}keine{{ end }} |
+| Geprüft am | {{ stamp .Now }} |
+
+{{ if not $s.ChainVerified }}
+Die folgenden Integritätsprobleme wurden gefunden. Eine gebrochene Kette bedeutet nicht
+zwingend Manipulation, denn ein Abschneiden durch einen unsauberen Shutdown sieht ähnlich
+aus, aber sie bedeutet, dass auf die betroffenen Aufzeichnungen als Nachweis kein Verlass
+mehr ist.
+
+{{ range $s.ChainProblems }}
+- `{{ .Segment }}` Zeile {{ .Line }}{{ if .Seq }} (Folgenr. {{ .Seq }}){{ end }}, {{ .Kind }}: {{ .Detail }}
+{{- end }}
+{{ end }}
+
+Jede Person kann diese Prüfung gegen das Nachweisverzeichnis erneut ausführen mit:
+
+```
+flugschreiber verify --dir <Nachweisverzeichnis>
+```
+
+Der Prüfer liest ausschließlich die Dateien auf der Festplatte. Er braucht keinen
+laufenden Server und keinen Zugang zu Ihrer Infrastruktur, sodass die Prüfung von einer
+prüfenden Stelle wiederholt werden kann, die nichts als eine Kopie des Protokolls besitzt.
+
+{{ if $s.Attested -}}
+Die Kette samt der geprüften Kontrollpunkte bedeutet, dass dieses Protokoll von niemandem
+umgeschrieben worden sein kann, der nicht auch den Signaturschlüssel hielt. Offen bleibt
+die Verwahrung des Schlüssels, und das ist die Sicherheitsgrenze.
+{{- else if gt $s.Checkpoints 0 -}}
+Kontrollpunkte sind vorhanden, aber keiner wurde gegen Signatur und Kette zugleich
+geprüft, was vor einem Verlass auf dieses Protokoll eine Untersuchung wert ist; siehe die
+Probleme oben.
+{{- else -}}
+Es wurden keine signierten Kontrollpunkte aufgezeichnet, sodass diese Kette nur innere
+Widerspruchsfreiheit zeigt: Niemand hat sie verändert, ohne sie ganz umzuschreiben, aber
+wer Schreibzugriff auf das gesamte Verzeichnis hat, könnte sie ganz umgeschrieben haben.
+Das Signieren von Kontrollpunkten ist voreingestellt aktiv; wurde es bewusst abgeschaltet,
+halten Sie fest, warum.
+{{- end }}
+
+{{ todo "Halten Sie fest, was das Nachweisverzeichnis und den Signaturschlüssel schützt: nur-anfügbarer oder mit Object Lock versehener Speicher, Off-Host-Replikation versiegelter Segmente, eingeschränkte Dateisystemrechte und wo der Schlüssel relativ zum Nachweis liegt. Ein neben dem Protokoll aufbewahrter Schlüssel schützt weit weniger als ein anderswo aufbewahrter." }}
+
+### 3.5 Menschliche Aufsicht
+
+{{ if gt $s.Interventions 0 -}}
+*Beobachtet.* {{ $s.Interventions }} Aufzeichnung(en) menschlicher Eingriffe wurden im
+Zeitraum in die Nachweiskette geschrieben{{ if $s.ByDecision }}: {{ joinCounts $s.ByDecision }}{{ end }}.
+Jede trägt die handelnde Person, die Entscheidung und die betroffene Interaktion, in
+derselben manipulationssicheren Kette wie die Interaktionen selbst.
+
+{{ todo "Beschreiben Sie den Aufsichtsprozess, aus dem diese Aufzeichnungen stammen: wer die handelnden Personen sind, welche Befugnis sie haben und was eine Prüfung auslöst. Aufgezeichnete Eingriffe belegen, dass Aufsicht stattfand; sie beschreiben nicht, wie sie organisiert ist." }}
+{{- else -}}
+Im Zeitraum wurden keine Aufzeichnungen menschlicher Eingriffe in die Nachweiskette
+geschrieben. Der Aufzeichnungsendpunkt existiert und ist dokumentiert; ob das bedeutet,
+dass keine Aufsicht stattfand oder dass sie ohne Aufzeichnung stattfand, ist eine Frage,
+die dieses Dokument beantworten muss.
+
+{{ todo "Beschreiben Sie, wie ein Mensch die Ausgabe dieses Systems verstehen, hinterfragen, außer Kraft setzen oder abschalten kann und wer dieser Mensch ist. Artikel 14 verlangt eine Aufsicht, die in der Praxis wirksam ist, nicht nur im Grundsatz verfügbar. Flugschreiber zeichnet Eingriffe auf, die an seinen Events-Endpunkt gesendet werden, kann die Aufsicht aber nicht selbst gestalten." }}
+{{- end }}
+
+### 3.6 Genauigkeit, Robustheit und Cybersicherheit
+
+{{ todo "Halten Sie fest, welche Genauigkeit vom System erwartet wird und wie sie gemessen wird. Halten Sie fest, was geschieht, wenn der Upstream nicht verfügbar ist oder einen Fehler liefert. Die oben beobachtete Fehlerquote ist ein Ausgangspunkt für diese Erörterung." }}
+
+{{ todo "Halten Sie die Sicherheitsmaßnahmen rund um den Modell-Endpunkt fest: Authentifizierung, Netzwerkisolierung, Ratenbegrenzung und wie das Risiko von Prompt-Injection behandelt wird, falls das System nicht vertrauenswürdige Eingaben verarbeitet." }}
+
+---
+
+## 4. Angemessenheit der Leistungskennzahlen
+
+{{ todo "Geben Sie an, mit welchen Kennzahlen Sie beurteilen, ob dieses System funktioniert, und warum diese Kennzahlen für die Zweckbestimmung die richtigen sind. Flugschreiber misst Verkehr, Latenz und Token-Verbrauch; keines davon sagt Ihnen, ob die Ausgabe gut war." }}
+
+---
+
+## 5. Risikomanagementsystem (Artikel 9)
+
+{{ todo "Verweisen Sie auf Ihren Risikomanagementprozess: die für diesen Anwendungsfall ermittelten Risiken, die getroffenen Maßnahmen und das akzeptierte Restrisiko. Flugschreiber erzeugt dies bewusst nicht, denn eine generierte Risikobeurteilung wäre schlechter als keine, weil sie wie eine aussähe." }}
+
+---
+
+## 6. Über den Lebenszyklus vorgenommene Änderungen
+
+{{ todo "Halten Sie wesentliche Änderungen am System und ihren Zeitpunkt fest. Änderungen der Modellversion sind in Abschnitt 1.2 sichtbar, wenn sie im Verkehr auftreten; Änderungen an Prompts, Abrufquellen, Werkzeugen und Schwellenwerten sind für Flugschreiber nicht sichtbar und müssen hier festgehalten werden." }}
+
+---
+
+## 7. Angewandte harmonisierte Normen
+
+{{ todo "Führen Sie alle ganz oder teilweise angewandten harmonisierten Normen oder gemeinsamen Spezifikationen auf. Falls keine, sagen Sie das ausdrücklich." }}
+
+---
+
+## 8. EU-Konformitätserklärung
+
+{{ todo "Fügen Sie die Erklärung bei, falls eine für dieses System erforderlich ist. Ist das System nicht hochriskant und keine Erklärung erforderlich, halten Sie das fest und dokumentieren Sie die Begründung, die zu diesem Schluss führte. Die Begründung ist der wertvolle Teil." }}
+
+---
+
+## 9. Beobachtung nach dem Inverkehrbringen
+
+{{ todo "Beschreiben Sie, wie das System nach dem Einsatz beobachtet wird und wie Vorfälle erkannt, eskaliert und gemeldet werden. Das Nachweisprotokoll ist ein Eingang dafür, nicht der Plan selbst." }}
+
+---
+
+## Anhang A: Regulatorischer Zeitplan
+
+Die Daten spiegeln den Zeitplan nach der Einigung zum Digital Omnibus wider. Prüfen Sie
+sie gegen den aktuellen Wortlaut, bevor Sie sich darauf verlassen.
+
+| Datum | Was gilt |
+| --- | --- |
+| 2. August 2026 | Transparenzpflichten nach Artikel 50 |
+| 2. Dezember 2026 | Neue Verbote |
+| 2. Dezember 2027 | Hochrisiko-Pflichten nach Anhang III |
+| 2. August 2028 | Pflichten nach Anhang I |
+
+In der ersten Zeile beginnt eine Pflicht später: Die maschinenlesbare Kennzeichnung nach
+Artikel 50 Absatz 2 gilt ab dem 2. Dezember 2026 für Systeme, die am 2. August 2026 bereits
+auf dem Markt sind. Die Interaktions-Kennzeichnung nach Artikel 50 Absatz 1 ist nicht
+aufgeschoben.
+
+## Anhang B: Wie dieses Dokument entstanden ist
+
+Flugschreiber las {{ $s.Records }} Aufzeichnungen aus `{{ .DataDir }}`, umfassend
+{{ $s.Window }}, prüfte die Hash-Kette und befüllte jeden Abschnitt, den es mit
+beobachteten Nachweisen stützen konnte. Abschnitte, die es nicht stützen konnte, sind mit
+**TODO** gekennzeichnet, statt geraten zu werden.
+
+Die feldweise Zuordnung des Protokollschemas zu den Bestimmungen, die es stützt, steht in
+`MAPPING.md` im Flugschreiber-Repository, samt ihren Vorbehalten.

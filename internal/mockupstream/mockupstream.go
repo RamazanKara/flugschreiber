@@ -34,6 +34,9 @@ func Handler(opts Options) http.Handler {
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
 		completion(w, r, opts)
 	})
+	mux.HandleFunc("POST /v1/responses", func(w http.ResponseWriter, r *http.Request) {
+		responses(w, r, opts)
+	})
 	mux.HandleFunc("POST /v1/embeddings", embeddings)
 	mux.HandleFunc("GET /v1/models", models)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +173,81 @@ func completion(w http.ResponseWriter, r *http.Request, opts Options) {
 	flusher.Flush()
 }
 
+type responsesRequest struct {
+	Model      string          `json:"model"`
+	Stream     bool            `json:"stream"`
+	Input      json.RawMessage `json:"input"`
+	PreviousID string          `json:"previous_response_id"`
+}
+
+// responses serves the OpenAI Responses API shape, streamed and not. It mirrors
+// the real body closely enough that the openai parser round-trips it: an
+// "output" array with a "message" item holding an "output_text" part, a "usage"
+// object with input_tokens and output_tokens, and, when streamed, a terminal
+// "response.completed" event embedding the whole final response.
+func responses(w http.ResponseWriter, r *http.Request, opts Options) {
+	var req responsesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	prompt := responsesPrompt(req.Input)
+	reply := replyTo(prompt)
+	id := "resp-mock-" + digest(prompt)
+	created := time.Now().Unix()
+	promptTokens := estimateTokens(prompt)
+	completionTokens := estimateTokens(reply)
+
+	body := func(status string) map[string]any {
+		return map[string]any{
+			"id":                   id,
+			"object":               "response",
+			"created_at":           created,
+			"model":                ModelName,
+			"status":               status,
+			"previous_response_id": nilOrString(req.PreviousID),
+			"output": []any{map[string]any{
+				"type":   "message",
+				"id":     "msg-" + digest(prompt),
+				"role":   "assistant",
+				"status": "completed",
+				"content": []any{map[string]any{
+					"type":        "output_text",
+					"text":        reply,
+					"annotations": []any{},
+				}},
+			}},
+			"usage": responsesUsage(promptTokens, completionTokens),
+		}
+	}
+
+	if !req.Stream {
+		writeJSON(w, http.StatusOK, body("completed"))
+		return
+	}
+
+	flusher, ok := beginSSE(w)
+	if !ok {
+		return
+	}
+	sendEvent(w, flusher, "response.created", map[string]any{
+		"type": "response.created", "response": body("in_progress"),
+	}, opts.ChunkDelay)
+	for _, word := range chunkWords(reply) {
+		sendEvent(w, flusher, "response.output_text.delta", map[string]any{
+			"type":          "response.output_text.delta",
+			"output_index":  0,
+			"content_index": 0,
+			"delta":         word,
+		}, opts.ChunkDelay)
+	}
+	sendEvent(w, flusher, "response.completed", map[string]any{
+		"type": "response.completed", "response": body("completed"),
+	}, 0)
+	fmt.Fprint(w, "data: [DONE]\n\n")
+	flusher.Flush()
+}
+
 func embeddings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Model string          `json:"model"`
@@ -233,6 +311,63 @@ func sendChunk(w http.ResponseWriter, f http.Flusher, payload map[string]any, de
 	if delay > 0 {
 		time.Sleep(delay)
 	}
+}
+
+// sendEvent writes one Responses SSE frame, an "event:" line naming the type
+// followed by the JSON payload. The event line exercises a real detail of the
+// wire format: a recorder must ignore it and read only the data.
+func sendEvent(w http.ResponseWriter, f http.Flusher, event string, payload map[string]any, delay time.Duration) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+	f.Flush()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+}
+
+// responsesPrompt pulls a stable prompt string out of a Responses "input",
+// whether it is a bare string or an array of items. The last message item wins,
+// matching how the chat handler keys its reply on the final message.
+func responsesPrompt(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var items []struct {
+		Type    string          `json:"type"`
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(raw, &items) == nil {
+		for i := len(items) - 1; i >= 0; i-- {
+			if items[i].Type == "" || items[i].Type == "message" {
+				return textOf(items[i].Content)
+			}
+		}
+	}
+	return ""
+}
+
+func responsesUsage(input, output int) map[string]any {
+	return map[string]any{
+		"input_tokens":  input,
+		"output_tokens": output,
+		"total_tokens":  input + output,
+	}
+}
+
+// nilOrString renders an absent previous_response_id as JSON null, the way the
+// real API does, rather than an empty string.
+func nilOrString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // replyTo produces a stable, self-describing answer. It deliberately says what

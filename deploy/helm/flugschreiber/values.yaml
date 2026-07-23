@@ -648,6 +648,49 @@ metrics:
     metricRelabelings: []
     skipCRDCheck: false
 
+# A Grafana dashboard for the exported metrics, shipped as a ConfigMap. The
+# Grafana sidecar (kiwigrid or the one bundled with kube-prometheus-stack)
+# discovers dashboards by a label rather than by namespace, so the ConfigMap
+# carries that label and Grafana loads it with no import step. The JSON is the
+# same file as deploy/observability/grafana-dashboard.json, which you can also
+# import by hand. The dashboard reads metrics; it is topology independent, so it
+# renders in either mode when enabled.
+dashboards:
+  # -- Render the dashboard ConfigMap.
+  enabled: false
+  # -- Label key the Grafana sidecar watches for. The value is "1". Match this
+  # to your sidecar's configured label; grafana_dashboard is the common default.
+  label: grafana_dashboard
+  # -- Extra labels on the dashboard ConfigMap.
+  labels: {}
+
+# Alerting rules as a Prometheus Operator PrometheusRule. Off by default, and
+# CRD-guarded: with prometheusRule.enabled and the CRD absent the chart refuses
+# the render rather than dropping the rules silently. Three alerts: capture
+# errors rising, a high archive upload failure ratio, and a capture stall, which
+# is evidence bytes flat while requests keep arriving. The metrics have to be
+# served for the rules to see anything, so the chart also refuses the pair
+# prometheusRule.enabled with metrics.enabled=false.
+prometheusRule:
+  # -- Render the PrometheusRule.
+  enabled: false
+  # -- Namespace for the PrometheusRule. Empty means the release namespace.
+  namespace: ""
+  # -- Labels on the PrometheusRule object. Set whatever your Prometheus selects
+  # rules on, commonly a release label, e.g. {release: kube-prometheus-stack}.
+  labels: {}
+  # -- Annotations on the PrometheusRule object.
+  annotations: {}
+  # -- Labels added to every alert this rule defines, e.g. a team or routing key
+  # Alertmanager keys on.
+  additionalLabels: {}
+  # -- Fraction of archive upload attempts (success plus failure, ignoring the
+  # skipped no-ops) that must be failures before FlugschreiberArchiveUploadFailing
+  # fires. 0.1 is ten percent.
+  archiveFailureRatio: 0.1
+  # -- Render without checking for the CRD. For `helm template` offline.
+  skipCRDCheck: false
+
 # Values read by the sidecar named templates in templates/_sidecar.tpl. They
 # are not rendered by this chart; they exist so a chart that depends on this
 # one can include a Flugschreiber container in its own pod. See the chart

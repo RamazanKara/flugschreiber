@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ramazankara.github.io/flugschreiber/schema/event.schema.json",
+  "title": "Flugschreiber evidence event",
+  "description": "The payload of one evidence record, as written by internal/evidence/event.go at schema version 1. Absent fields are omitted rather than zero-filled, so a reader can tell 'not observed' from 'observed as zero'. Per docs/SCHEMA.md a reader must ignore fields it does not recognise, so this schema does not forbid additional properties.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_type",
+    "request_id",
+    "stream"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "The version of the event structure. Bumped only for breaking changes."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "inference",
+        "tool_call",
+        "tool_result",
+        "human_intervention",
+        "session_start",
+        "session_end",
+        "config_change",
+        "system_event",
+        "incident"
+      ],
+      "description": "What the record is. inference records are written only by the proxy from observed traffic; the rest may be submitted through the authenticated events endpoint."
+    },
+    "request_id": {
+      "type": "string",
+      "description": "Identifier of the interaction this record concerns."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Client-supplied conversation identifier, when present."
+    },
+    "client_hash": {
+      "type": "string",
+      "description": "Salted hash of the caller credential. Distinguishes callers without revealing the credential; the salt never leaves the host."
+    },
+    "endpoint": {
+      "type": "string",
+      "description": "Request path, for example /v1/chat/completions."
+    },
+    "method": {
+      "type": "string",
+      "description": "HTTP method of the request."
+    },
+    "upstream": {
+      "type": "string",
+      "description": "Base URL of the model server that served the interaction."
+    },
+    "model_requested": {
+      "type": "string",
+      "description": "Model named in the request."
+    },
+    "model_served": {
+      "type": "string",
+      "description": "Model the upstream reported serving."
+    },
+    "upstream_response_id": {
+      "type": "string",
+      "description": "Response identifier reported by the upstream."
+    },
+    "upstream_previous_id": {
+      "type": "string",
+      "description": "The OpenAI Responses API previous_response_id, that API's own linkage between turns of one conversation."
+    },
+    "params": {
+      "$ref": "#/$defs/params"
+    },
+    "usage": {
+      "$ref": "#/$defs/usage"
+    },
+    "stream": {
+      "type": "boolean",
+      "description": "Whether the response was a stream of server-sent events."
+    },
+    "finish_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Finish reasons reported by the upstream, one per choice."
+    },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/toolCall"
+      },
+      "description": "Function calls the model asked for."
+    },
+    "tool_results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/toolResult"
+      },
+      "description": "What tools returned, carried on the inference event rather than as separate chain events, because chat clients resend the whole conversation each turn."
+    },
+    "status": {
+      "type": "integer",
+      "description": "HTTP status returned to the client."
+    },
+    "error": {
+      "type": "string",
+      "description": "Failure description when the interaction did not complete."
+    },
+    "latency_ms": {
+      "type": "number",
+      "description": "End to end duration of the interaction in milliseconds."
+    },
+    "ttfb_ms": {
+      "type": "number",
+      "description": "Milliseconds from receiving the request to the upstream's first response byte."
+    },
+    "content": {
+      "$ref": "#/$defs/content"
+    },
+    "note": {
+      "type": "string",
+      "description": "Free-form context for system_event and human_intervention records."
+    },
+    "actor": {
+      "type": "string",
+      "description": "Who performed a human_intervention or filed an incident. Supplied by the caller and not verified by Flugschreiber."
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "override",
+        "reject",
+        "escalate",
+        "halt",
+        "annotate"
+      ],
+      "description": "Structured outcome of a human_intervention."
+    },
+    "ref_request_id": {
+      "type": "string",
+      "description": "The inference record this event concerns, for events that comment on an interaction rather than being one."
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "suspected",
+        "serious",
+        "resolved"
+      ],
+      "description": "Classifies an incident record. Empty on every other event type."
+    }
+  },
+  "$defs": {
+    "params": {
+      "type": "object",
+      "title": "Generation parameters",
+      "description": "The generation parameters that were requested. Only parameters actually present in the request are recorded.",
+      "properties": {
+        "temperature": {
+          "type": "number"
+        },
+        "top_p": {
+          "type": "number"
+        },
+        "max_tokens": {
+          "type": "integer"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "stop": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "presence_penalty": {
+          "type": "number"
+        },
+        "frequency_penalty": {
+          "type": "number"
+        },
+        "response_format": {
+          "type": "string"
+        },
+        "tool_choice": {
+          "type": "string"
+        },
+        "tools_offered": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "title": "Token accounting",
+      "description": "Token accounting as reported by the upstream. Absent when the upstream does not report it.",
+      "required": [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "properties": {
+        "prompt_tokens": {
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "type": "integer"
+        },
+        "total_tokens": {
+          "type": "integer"
+        }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "title": "Tool call",
+      "description": "A function call the model asked for. Arguments follow the active content mode: they are hashed unless the mode stores content.",
+      "required": [
+        "index",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "string"
+        },
+        "arguments_sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "toolResult": {
+      "type": "object",
+      "title": "Tool result",
+      "description": "What a tool returned. Content follows the active content mode; the digest and byte count are always over the result as it was seen.",
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "call_id": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer"
+        },
+        "content": {
+          "type": "string"
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "title": "Captured content",
+      "description": "The record of what was sent and received, at the fidelity the configured content mode allows.",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "store",
+            "hash",
+            "redact"
+          ]
+        },
+        "input": {
+          "$ref": "#/$defs/payload"
+        },
+        "output": {
+          "$ref": "#/$defs/payload"
+        },
+        "encryption": {
+          "$ref": "#/$defs/contentEncryption"
+        }
+      }
+    },
+    "contentEncryption": {
+      "type": "object",
+      "title": "Content encryption marker",
+      "description": "Marks a record whose stored text is encrypted at rest, so an erasure can destroy the wrapping key and render the content unrecoverable without touching the chain. When erased is true the key is gone and the digests over the original wire bytes remain as claims that can no longer be re-proven.",
+      "required": [
+        "algorithm",
+        "key_id"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string"
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "erased": {
+          "type": "boolean"
+        },
+        "erased_at": {
+          "type": "string"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "title": "Interaction side",
+      "description": "One side of an interaction. sha256 and bytes are always computed over the raw bytes as they crossed the wire, in every content mode, so a stored transcript can be checked against the hash of the original.",
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/message"
+          }
+        },
+        "text": {
+          "type": "string"
+        },
+        "ciphertext": {
+          "type": "string",
+          "description": "base64(nonce || AES-GCM ciphertext) when content encryption is on. text and messages are then empty; erasing the wrapping key leaves this present but permanently undecryptable."
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "redactions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "description": "Count of replacements per redaction label, present in redact mode."
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "title": "Chat message",
+      "description": "One chat message, retained only in store and redact modes.",
+      "required": [
+        "role",
+        "content"
+      ],
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

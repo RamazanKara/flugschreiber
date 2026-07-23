@@ -262,6 +262,9 @@ func (c *Config) ApplyEnv() error {
 		}
 	}
 	str("LISTEN", &c.Listen)
+	// A single default upstream is expressible through UPSTREAM for back-compat.
+	// The multi-route Upstreams list has no environment form: it is a structured
+	// list with per-route TLS and glob settings, so it is config-file only.
 	str("UPSTREAM", &c.Upstream)
 	str("UPSTREAM_API_KEY", &c.UpstreamAPIKey)
 	str("EVENTS_TOKEN", &c.EventsToken)
@@ -345,19 +348,22 @@ func (c *Config) Validate() error {
 	if c.DataDir == "" {
 		return errors.New("config: data directory is required")
 	}
-	if !c.MockUpstream {
+	switch {
+	case len(c.Upstreams) > 0:
+		// The single upstream and the routes list are two ways to say the same
+		// thing, so setting both is ambiguous rather than additive.
+		if c.Upstream != "" {
+			return errors.New("config: set either upstream or upstreams, not both")
+		}
+		if err := validateUpstreams(c.Upstreams); err != nil {
+			return err
+		}
+	case !c.MockUpstream:
 		if c.Upstream == "" {
 			return errors.New("config: an upstream is required (or use --mock-upstream)")
 		}
-		u, err := url.Parse(c.Upstream)
-		if err != nil {
-			return fmt.Errorf("config: upstream %q: %w", c.Upstream, err)
-		}
-		if u.Scheme != "http" && u.Scheme != "https" {
-			return fmt.Errorf("config: upstream %q must be an http or https URL", c.Upstream)
-		}
-		if u.Host == "" {
-			return fmt.Errorf("config: upstream %q has no host", c.Upstream)
+		if err := validateHTTPURL("upstream", c.Upstream); err != nil {
+			return err
 		}
 	}
 	if !content.ValidMode(c.ContentMode) {
@@ -387,6 +393,67 @@ func (c *Config) Validate() error {
 	}
 	if c.ContentMode == evidence.ModeRedact && len(c.RedactPatterns) == 0 {
 		c.RedactPatterns = content.DefaultPatternNames
+	}
+	return nil
+}
+
+// validateUpstreams checks a routes list: every route needs a name and a valid
+// http or https URL, and exactly one route must be marked default so there is
+// always a fallback for a model no route claims. Per-route CA and skip-verify
+// settings follow the same rules as the single upstream's, which place no
+// constraint on the pair (skip-verify simply wins when both are set), so nothing
+// more is checked here.
+// routeEndpointKinds are the endpoint kinds a route may restrict itself to.
+// They mirror the openai package's classification. A route that names a kind
+// outside this set (the classic mistake is the plural "embeddings") would match
+// nothing and silently send traffic to the default route, so it is rejected at
+// startup rather than discovered as a coverage gap.
+var routeEndpointKinds = map[string]bool{
+	"chat": true, "completion": true, "embedding": true, "responses": true,
+}
+
+func validateUpstreams(routes []UpstreamRoute) error {
+	defaults := 0
+	for i := range routes {
+		r := routes[i]
+		if r.Name == "" {
+			return fmt.Errorf("config: upstreams[%d] needs a name", i)
+		}
+		if err := validateHTTPURL(fmt.Sprintf("upstreams[%s] url", r.Name), r.URL); err != nil {
+			return err
+		}
+		for _, kind := range r.Endpoints {
+			if !routeEndpointKinds[kind] {
+				return fmt.Errorf(
+					"config: upstreams[%s] endpoint %q is not a known kind (chat, completion, embedding, responses)",
+					r.Name, kind)
+			}
+		}
+		if r.TLSSkip && r.CAFile != "" {
+			return fmt.Errorf("config: upstreams[%s] sets both a CA file and tls_skip_verify; use one", r.Name)
+		}
+		if r.Default {
+			defaults++
+		}
+	}
+	if defaults != 1 {
+		return fmt.Errorf("config: upstreams needs exactly one default route, found %d", defaults)
+	}
+	return nil
+}
+
+// validateHTTPURL rejects anything that is not an absolute http or https URL
+// with a host, naming the setting so the error points at what to fix.
+func validateHTTPURL(label, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("config: %s %q: %w", label, raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("config: %s %q must be an http or https URL", label, raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("config: %s %q has no host", label, raw)
 	}
 	return nil
 }

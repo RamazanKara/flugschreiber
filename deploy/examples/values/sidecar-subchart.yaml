@@ -29,6 +29,16 @@ flugschreiber:
   # No Deployment, Service, claim or policy. Only the named templates.
   mode: sidecar
 
+  # The scheduled verify and retention Jobs need a claim of their own to mount,
+  # and in sidecar mode the chart cannot see the application pod's volume. This
+  # example uses the application's own volume, so the Jobs are turned off; run
+  # verify and retention from wherever that volume is also mounted, or set
+  # persistence.existingClaim and enable them.
+  verify:
+    enabled: false
+  retention:
+    enabled: false
+
   config:
     upstream: http://vllm.models.svc.cluster.local:8000
     contentMode: hash

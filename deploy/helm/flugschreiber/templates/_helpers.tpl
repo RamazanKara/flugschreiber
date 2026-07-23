@@ -375,6 +375,17 @@ template in sidecar mode, so it runs in both topologies.
 {{- fail "verify.enabled is true but persistence.enabled is false. The CronJob would get its own empty emptyDir rather than the directory the proxy writes to, verify an empty chain, and report success every hour. Set persistence.enabled=true, or verify.enabled=false if you are only smoke testing." -}}
 {{- end -}}
 
+{{- /*
+In sidecar mode the evidence lives on the application pod's own volume, which
+this chart neither creates nor can name. A scheduled verify or retention Job
+therefore has nothing to mount unless it is told the claim explicitly, so an
+enabled CronJob without persistence.existingClaim is refused here rather than
+installed to run against an empty emptyDir every hour.
+*/ -}}
+{{- if and (not $central) (or $v.verify.enabled $v.retention.enabled) (not $v.persistence.existingClaim) -}}
+{{- fail (printf "mode is sidecar and a scheduled Job is enabled (verify.enabled=%v, retention.enabled=%v), but persistence.existingClaim is empty. In sidecar mode the evidence is written to the application pod's volume, which this chart did not create and cannot guess, so the CronJob has nothing to mount and would verify or prune an empty emptyDir. Set persistence.existingClaim to the claim your application pod uses for the evidence directory, or set verify.enabled=false and retention.enabled=false to run no scheduled Jobs." $v.verify.enabled $v.retention.enabled) -}}
+{{- end -}}
+
 {{- if and $central $v.networkPolicy.enabled (not $v.networkPolicy.ingressFrom) -}}
 {{- fail "networkPolicy.enabled is true but networkPolicy.ingressFrom is empty, which denies all ingress to the proxy and takes your applications with it. List the namespaces or pods that are allowed to call the proxy." -}}
 {{- end -}}
@@ -395,6 +406,10 @@ template in sidecar mode, so it runs in both topologies.
 
 {{- if and $central (or $v.metrics.serviceMonitor.enabled $v.metrics.podMonitor.enabled) (not $v.metrics.enabled) -}}
 {{- fail "a monitor is enabled but metrics.enabled is false. Set metrics.enabled=true so the scrape target exists." -}}
+{{- end -}}
+
+{{- if and $v.prometheusRule.enabled (not $v.metrics.enabled) -}}
+{{- fail "prometheusRule.enabled is true but metrics.enabled is false. Every alert reads a metric this proxy would not be serving, so the rules would sit on absent data and never fire. Set metrics.enabled=true, or prometheusRule.enabled=false." -}}
 {{- end -}}
 
 {{- if and $central $v.podDisruptionBudget.enabled $v.podDisruptionBudget.maxUnavailable $v.podDisruptionBudget.minAvailable -}}

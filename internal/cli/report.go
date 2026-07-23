@@ -21,9 +21,13 @@ func Report(args []string) error {
 Reads an evidence directory and generates documentation artifacts pre-filled
 from the traffic that was actually observed:
 
-  technical-documentation.md        Annex IV-shaped skeleton
+  technical-documentation.md        Annex IV-shaped skeleton (English)
+  technical-documentation-de.md     Annex IV-shaped skeleton (German)
   transparency-article-50-en.md     Article 50 transparency pack, English
   transparency-article-50-de.md     Article 50 transparency pack, German
+
+Use --lang to select editions: en, de, or both (the default). Each Markdown
+document is also written as HTML, and with --pdf as PDF.
 
 Each of those is also written as a standalone HTML page under the same name
 with a .html extension, for reading and printing without a Markdown tool, and,
@@ -53,6 +57,7 @@ Flags:
 		retention  = fs.Int("retention-days", 0, "retention to describe (default 180)")
 		nowFlag    = fs.String("now", "", "override the generation timestamp, RFC3339 (for reproducible output)")
 		pdfFlag    = fs.Bool("pdf", false, "also render each document as a PDF, using only the built-in base fonts")
+		lang       = fs.String("lang", "both", "language editions to produce: en, de, or both")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -60,6 +65,9 @@ Flags:
 	if *dir == "" {
 		fs.Usage()
 		return errors.New("report: --dir is required")
+	}
+	if !report.ValidLang(*lang) {
+		return fmt.Errorf("report: --lang %q must be en, de, or both", *lang)
 	}
 
 	cfg := config.Default()
@@ -113,6 +121,7 @@ Flags:
 		DataDir:        *dir,
 		Version:        version.String(),
 		Now:            now,
+		Lang:           *lang,
 	})
 	if err != nil {
 		return err

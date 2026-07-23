@@ -312,6 +312,7 @@ func TestEndpointForRejectsAnythingUnrecognised(t *testing.T) {
 		{"chat", EndpointChat},
 		{"completion", EndpointCompletion},
 		{"embedding", EndpointEmbedding},
+		{"responses", EndpointResponses},
 		{"other", EndpointOther},
 		{"/v1/chat/completions", EndpointOther},
 		{"", EndpointOther},
@@ -323,6 +324,23 @@ func TestEndpointForRejectsAnythingUnrecognised(t *testing.T) {
 				t.Errorf("EndpointFor(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// The Responses API is its own endpoint class, so its traffic must land on a
+// distinct series rather than collapsing into "other".
+func TestResponsesIsADistinctEndpointSeries(t *testing.T) {
+	m := newTestMetrics()
+	m.ObserveRequest(RequestObservation{Endpoint: EndpointResponses, Method: "POST", Status: 200})
+	m.ObserveRequest(RequestObservation{Endpoint: EndpointChat, Method: "POST", Status: 200})
+
+	got := body(t, m)
+	responses := "flugschreiber_requests_total{endpoint=\"responses\",method=\"POST\",status_class=\"2xx\",stream=\"false\"} 1\n"
+	if !strings.Contains(got, responses) {
+		t.Errorf("want a responses series line: %s\ngot:\n%s", responses, got)
+	}
+	if strings.Contains(got, "endpoint=\"other\"") {
+		t.Errorf("responses traffic collapsed into the other series:\n%s", got)
 	}
 }
 

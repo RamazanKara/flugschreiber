@@ -196,8 +196,8 @@ func TestGenerateMatchesGoldenFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if len(generated.Artifacts) != 6 {
-		t.Fatalf("generated %d artifacts, want 6 (three Markdown documents and an HTML rendering of each)", len(generated.Artifacts))
+	if len(generated.Artifacts) != 8 {
+		t.Fatalf("generated %d artifacts, want 8 (four Markdown documents and an HTML rendering of each)", len(generated.Artifacts))
 	}
 
 	for _, a := range generated.Artifacts {
@@ -471,4 +471,95 @@ func itoa(i int) string {
 		i /= 10
 	}
 	return string(b)
+}
+
+// The language selector narrows which editions are produced. Default (both)
+// emits the German Annex IV alongside the English one; en and de each emit only
+// their own, which is what lets a German-speaking DPO get a German-only pack.
+func TestLanguageSelection(t *testing.T) {
+	cases := []struct {
+		lang      string
+		wantFiles []string
+		notFiles  []string
+	}{
+		{
+			lang: LangBoth,
+			wantFiles: []string{
+				"technical-documentation.md", "technical-documentation-de.md",
+				"transparency-article-50-en.md", "transparency-article-50-de.md",
+			},
+		},
+		{
+			lang:      LangEnglish,
+			wantFiles: []string{"technical-documentation.md", "transparency-article-50-en.md"},
+			notFiles:  []string{"technical-documentation-de.md", "transparency-article-50-de.md"},
+		},
+		{
+			lang:      LangGerman,
+			wantFiles: []string{"technical-documentation-de.md", "transparency-article-50-de.md"},
+			notFiles:  []string{"technical-documentation.md", "transparency-article-50-en.md"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.lang, func(t *testing.T) {
+			in := fixtureInput(t, buildFixture(t))
+			in.Lang = tc.lang
+			g, err := Generate(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			have := map[string]bool{}
+			for _, a := range g.Artifacts {
+				have[a.Filename] = true
+			}
+			for _, f := range tc.wantFiles {
+				if !have[f] {
+					t.Errorf("%s selector did not produce %s", tc.lang, f)
+				}
+			}
+			for _, f := range tc.notFiles {
+				if have[f] {
+					t.Errorf("%s selector wrongly produced %s", tc.lang, f)
+				}
+			}
+		})
+	}
+}
+
+// The German Annex IV must be genuinely German, not English text under a German
+// filename, and must carry the official Anhang IV section terminology.
+func TestGermanAnnexIVIsGerman(t *testing.T) {
+	in := fixtureInput(t, buildFixture(t))
+	in.Lang = LangGerman
+	g, err := Generate(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc string
+	for _, a := range g.Artifacts {
+		if a.Filename == "technical-documentation-de.md" {
+			doc = string(a.Content)
+		}
+	}
+	if doc == "" {
+		t.Fatal("no German technical documentation was produced")
+	}
+	for _, phrase := range []string{
+		"Technische Dokumentation",
+		"Zweckbestimmung",
+		"Menschliche Aufsicht",
+		"Risikomanagementsystem",
+		"keine Rechtsberatung",
+	} {
+		if !strings.Contains(doc, phrase) {
+			t.Errorf("German Annex IV is missing the term %q", phrase)
+		}
+	}
+	// A tell that English leaked through: these headings must not appear.
+	for _, leak := range []string{"Intended purpose", "Human oversight", "This is a skeleton"} {
+		if strings.Contains(doc, leak) {
+			t.Errorf("English text %q leaked into the German document", leak)
+		}
+	}
 }

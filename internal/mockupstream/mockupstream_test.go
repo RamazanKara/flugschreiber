@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/RamazanKara/flugschreiber/internal/openai"
 )
 
 func post(t *testing.T, path, body string) (int, string) {
@@ -96,6 +98,68 @@ func TestEmbeddingsShapeAndDeterminism(t *testing.T) {
 	_, again := post(t, "/v1/embeddings", `{"model":"m","input":["a","b"]}`)
 	if body != again {
 		t.Error("identical embedding requests differ")
+	}
+}
+
+// The mock's Responses body must parse back through the real parser, so the
+// two agree on the wire shape and the demo needs no live server.
+func TestResponsesNonStreamedRoundTrips(t *testing.T) {
+	status, body := post(t, "/v1/responses",
+		`{"model":"m","input":"hello"}`)
+	if status != 200 {
+		t.Fatalf("status = %d: %s", status, body)
+	}
+	resp := openai.ParseResponse(openai.EndpointResponses, []byte(body))
+	if !strings.Contains(resp.Text, "No model was involved") {
+		t.Errorf("assembled text does not self-identify as a mock: %q", resp.Text)
+	}
+	if resp.ID == "" || resp.Model != ModelName {
+		t.Errorf("ID/Model = %q/%q", resp.ID, resp.Model)
+	}
+	if resp.Usage == nil || resp.Usage.TotalTokens == 0 {
+		t.Errorf("Usage = %+v, want input/output tokens", resp.Usage)
+	}
+	if len(resp.FinishReasons) != 1 || resp.FinishReasons[0] != "completed" {
+		t.Errorf("FinishReasons = %v, want [completed]", resp.FinishReasons)
+	}
+}
+
+// The streamed body must assemble to the same response as the non-streamed one.
+func TestResponsesStreamedRoundTripsToTheSameText(t *testing.T) {
+	_, nonStream := post(t, "/v1/responses", `{"model":"m","input":"hello"}`)
+	want := openai.ParseResponse(openai.EndpointResponses, []byte(nonStream))
+
+	status, body := post(t, "/v1/responses",
+		`{"model":"m","stream":true,"input":"hello"}`)
+	if status != 200 {
+		t.Fatalf("status = %d: %s", status, body)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(body), "data: [DONE]") {
+		t.Errorf("stream does not terminate with [DONE]:\n%s", body)
+	}
+	got := openai.ParseStream(openai.EndpointResponses, []byte(body))
+	if got.Text != want.Text {
+		t.Errorf("streamed text = %q, non-streamed = %q", got.Text, want.Text)
+	}
+	if got.ID != want.ID {
+		t.Errorf("streamed ID = %q, non-streamed = %q", got.ID, want.ID)
+	}
+	if got.Usage == nil || got.Usage.TotalTokens != want.Usage.TotalTokens {
+		t.Errorf("streamed Usage = %+v, want total %d", got.Usage, want.Usage.TotalTokens)
+	}
+}
+
+func TestResponsesRepliesAreDeterministic(t *testing.T) {
+	const req = `{"model":"m","input":"same"}`
+	_, first := post(t, "/v1/responses", req)
+	_, second := post(t, "/v1/responses", req)
+	// created_at is a wall-clock field, so compare the assembled reply and id
+	// rather than the raw bytes.
+	a := openai.ParseResponse(openai.EndpointResponses, []byte(first))
+	b := openai.ParseResponse(openai.EndpointResponses, []byte(second))
+	if a.Text != b.Text || a.ID != b.ID {
+		t.Errorf("two identical Responses requests diverged: %q/%q vs %q/%q",
+			a.Text, a.ID, b.Text, b.ID)
 	}
 }
 

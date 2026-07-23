@@ -82,6 +82,14 @@ type rawResponse struct {
 
 // ParseResponse reads a non-streamed response body.
 func ParseResponse(kind string, body []byte) *Response {
+	if kind == EndpointResponses {
+		var raw rawResponsesBody
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return &Response{}
+		}
+		return responseFromResponsesBody(&raw)
+	}
+
 	resp := &Response{}
 	var raw rawResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -150,6 +158,10 @@ type streamChunk struct {
 // Frames that do not parse are skipped rather than aborting assembly, so one
 // malformed chunk from an upstream does not erase the whole interaction.
 func ParseStream(kind string, raw []byte) *Response {
+	if kind == EndpointResponses {
+		return parseResponsesStream(raw)
+	}
+
 	resp := &Response{}
 	texts := map[int]*strings.Builder{}
 	tools := map[int]*ToolCall{}
@@ -269,4 +281,235 @@ func sortedKeys[V any](m map[int]V) []int {
 	}
 	sort.Ints(keys)
 	return keys
+}
+
+// rawResponsesBody is the non-streamed Responses API body, also embedded whole
+// inside the terminal streaming events.
+type rawResponsesBody struct {
+	ID                string `json:"id"`
+	PreviousID        string `json:"previous_response_id"`
+	Model             string `json:"model"`
+	Status            string `json:"status"`
+	IncompleteDetails struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details"`
+	Output []rawResponsesOutput `json:"output"`
+	Usage  *rawResponsesUsage   `json:"usage"`
+}
+
+type rawResponsesOutput struct {
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Content   []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+type rawResponsesUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
+func (u *rawResponsesUsage) convert() *evidence.Usage {
+	if u == nil {
+		return nil
+	}
+	if u.InputTokens == 0 && u.OutputTokens == 0 && u.TotalTokens == 0 {
+		return nil
+	}
+	total := u.TotalTokens
+	if total == 0 {
+		total = u.InputTokens + u.OutputTokens
+	}
+	return &evidence.Usage{
+		PromptTokens:     u.InputTokens,
+		CompletionTokens: u.OutputTokens,
+		TotalTokens:      total,
+	}
+}
+
+// responseFromResponsesBody assembles a Response from a fully parsed Responses
+// body: "message" items contribute their output_text parts to the text,
+// "function_call" items become tool calls, and everything else (reasoning and
+// the like) carries no transcript text.
+func responseFromResponsesBody(raw *rawResponsesBody) *Response {
+	resp := &Response{
+		ID:         raw.ID,
+		PreviousID: raw.PreviousID,
+		Model:      raw.Model,
+		Usage:      raw.Usage.convert(),
+	}
+	var texts []string
+	for _, item := range raw.Output {
+		switch item.Type {
+		case "message":
+			var b strings.Builder
+			for _, part := range item.Content {
+				b.WriteString(part.Text)
+			}
+			if b.Len() > 0 {
+				texts = append(texts, b.String())
+			}
+		case "function_call":
+			id := item.CallID
+			if id == "" {
+				id = item.ID
+			}
+			resp.ToolCalls = append(resp.ToolCalls, ToolCall{
+				ID:        id,
+				Index:     len(resp.ToolCalls),
+				Name:      item.Name,
+				Arguments: item.Arguments,
+			})
+		}
+	}
+	resp.Text = strings.Join(texts, "\n")
+	resp.FinishReasons = responsesFinish(raw.Status, raw.IncompleteDetails.Reason)
+	return resp
+}
+
+// responsesFinish maps the Responses status onto the finish-reason slice. An
+// incomplete response reports the reason it stopped when the upstream gives one.
+func responsesFinish(status, incompleteReason string) []string {
+	switch status {
+	case "":
+		return nil
+	case "incomplete":
+		if incompleteReason != "" {
+			return []string{incompleteReason}
+		}
+		return []string{"incomplete"}
+	default:
+		return []string{status}
+	}
+}
+
+// parseResponsesStream assembles a Responses API SSE stream. It prefers the
+// terminal event ("response.completed" and its incomplete or failed siblings),
+// whose data embeds the whole final response, and parses that exactly like the
+// non-streamed body. When no terminal event arrives it falls back to
+// accumulating the text and function-call-argument deltas frame by frame. A
+// frame that does not parse is skipped, so one bad frame never aborts assembly.
+func parseResponsesStream(raw []byte) *Response {
+	var completed *Response
+	fallback := &Response{}
+	texts := map[int]*strings.Builder{}
+	tools := map[int]*ToolCall{}
+
+	for _, data := range sseData(raw) {
+		if data == "[DONE]" {
+			continue
+		}
+		var head struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(data), &head) != nil {
+			continue
+		}
+		switch head.Type {
+		case "response.completed", "response.incomplete", "response.failed":
+			var env struct {
+				Response *rawResponsesBody `json:"response"`
+			}
+			if json.Unmarshal([]byte(data), &env) == nil && env.Response != nil {
+				completed = responseFromResponsesBody(env.Response)
+			}
+		case "response.created", "response.in_progress":
+			var env struct {
+				Response *rawResponsesBody `json:"response"`
+			}
+			if json.Unmarshal([]byte(data), &env) == nil && env.Response != nil {
+				applyResponsesMeta(fallback, env.Response)
+			}
+		case "response.output_item.added":
+			var env struct {
+				OutputIndex int `json:"output_index"`
+				Item        struct {
+					Type      string `json:"type"`
+					ID        string `json:"id"`
+					CallID    string `json:"call_id"`
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"item"`
+			}
+			if json.Unmarshal([]byte(data), &env) != nil || env.Item.Type != "function_call" {
+				continue
+			}
+			tc := toolAt(tools, env.OutputIndex)
+			if env.Item.CallID != "" {
+				tc.ID = env.Item.CallID
+			} else if env.Item.ID != "" {
+				tc.ID = env.Item.ID
+			}
+			if env.Item.Name != "" {
+				tc.Name = env.Item.Name
+			}
+			tc.Arguments += env.Item.Arguments
+		case "response.output_text.delta":
+			var env struct {
+				OutputIndex int    `json:"output_index"`
+				Delta       string `json:"delta"`
+			}
+			if json.Unmarshal([]byte(data), &env) != nil {
+				continue
+			}
+			b, ok := texts[env.OutputIndex]
+			if !ok {
+				b = &strings.Builder{}
+				texts[env.OutputIndex] = b
+			}
+			b.WriteString(env.Delta)
+		case "response.function_call_arguments.delta":
+			var env struct {
+				OutputIndex int    `json:"output_index"`
+				Delta       string `json:"delta"`
+			}
+			if json.Unmarshal([]byte(data), &env) != nil {
+				continue
+			}
+			toolAt(tools, env.OutputIndex).Arguments += env.Delta
+		}
+	}
+
+	if completed != nil {
+		return completed
+	}
+
+	var assembled []string
+	for _, idx := range sortedKeys(texts) {
+		if s := texts[idx].String(); s != "" {
+			assembled = append(assembled, s)
+		}
+	}
+	fallback.Text = strings.Join(assembled, "\n")
+	for _, idx := range sortedKeys(tools) {
+		fallback.ToolCalls = append(fallback.ToolCalls, *tools[idx])
+	}
+	return fallback
+}
+
+func applyResponsesMeta(resp *Response, raw *rawResponsesBody) {
+	if raw.ID != "" {
+		resp.ID = raw.ID
+	}
+	if raw.PreviousID != "" {
+		resp.PreviousID = raw.PreviousID
+	}
+	if raw.Model != "" {
+		resp.Model = raw.Model
+	}
+}
+
+func toolAt(tools map[int]*ToolCall, index int) *ToolCall {
+	tc, ok := tools[index]
+	if !ok {
+		tc = &ToolCall{Index: index}
+		tools[index] = tc
+	}
+	return tc
 }

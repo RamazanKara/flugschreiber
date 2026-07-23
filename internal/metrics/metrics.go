@@ -76,6 +76,7 @@ const (
 	EndpointChat       Endpoint = "chat"
 	EndpointCompletion Endpoint = "completion"
 	EndpointEmbedding  Endpoint = "embedding"
+	EndpointResponses  Endpoint = "responses"
 	EndpointOther      Endpoint = "other"
 )
 
@@ -84,7 +85,7 @@ const (
 // never create a new time series.
 func EndpointFor(kind string) Endpoint {
 	switch Endpoint(kind) {
-	case EndpointChat, EndpointCompletion, EndpointEmbedding:
+	case EndpointChat, EndpointCompletion, EndpointEmbedding, EndpointResponses:
 		return Endpoint(kind)
 	}
 	return EndpointOther

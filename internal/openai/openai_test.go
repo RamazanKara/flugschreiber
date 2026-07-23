@@ -1,8 +1,11 @@
 package openai
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 func TestClassifyPath(t *testing.T) {
@@ -11,6 +14,8 @@ func TestClassifyPath(t *testing.T) {
 		"/openai/v1/chat/completions": EndpointChat,
 		"/v1/completions":             EndpointCompletion,
 		"/v1/embeddings":              EndpointEmbedding,
+		"/v1/responses":               EndpointResponses,
+		"/openai/v1/responses":        EndpointResponses,
 		"/v1/models":                  EndpointOther,
 		"/healthz":                    EndpointOther,
 	}
@@ -253,6 +258,262 @@ func TestParseResponseEmbeddings(t *testing.T) {
 	}
 	if resp.Text != "" {
 		t.Errorf("Text = %q, embeddings should not produce transcript text", resp.Text)
+	}
+}
+
+func TestParseRequestResponsesStringInput(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-4o",
+		"instructions":"Be brief.",
+		"previous_response_id":"resp_100",
+		"temperature":0.5,
+		"max_output_tokens":256,
+		"tools":[{"type":"function","name":"get_weather"}],
+		"input":"What is the weather?"
+	}`)
+
+	req := ParseRequest(EndpointResponses, body)
+	if req.Model != "gpt-4o" {
+		t.Errorf("Model = %q", req.Model)
+	}
+	if req.PreviousID != "resp_100" {
+		t.Errorf("PreviousID = %q, want resp_100", req.PreviousID)
+	}
+	if req.Params == nil {
+		t.Fatal("Params = nil")
+	}
+	if req.Params.Temperature == nil || *req.Params.Temperature != 0.5 {
+		t.Errorf("Temperature = %v", req.Params.Temperature)
+	}
+	if req.Params.MaxTokens == nil || *req.Params.MaxTokens != 256 {
+		t.Errorf("MaxTokens = %v, want max_output_tokens mapped through", req.Params.MaxTokens)
+	}
+	if got := req.Params.ToolsOffered; len(got) != 1 || got[0] != "get_weather" {
+		t.Errorf("ToolsOffered = %v, want the top-level Responses tool name", got)
+	}
+	want := []evidence.Message{
+		{Role: "system", Content: "Be brief."},
+		{Role: "user", Content: "What is the weather?"},
+	}
+	if !reflect.DeepEqual(req.Messages, want) {
+		t.Errorf("Messages = %+v, want %+v", req.Messages, want)
+	}
+}
+
+func TestParseRequestResponsesItemArrayInput(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-4o",
+		"input":[
+			{"type":"message","role":"user","content":[
+				{"type":"input_text","text":"What is this?"},
+				{"type":"input_image","image_url":"data:image/png;base64,AAAAAAAA"}
+			]},
+			{"type":"function_call_output","call_id":"call_1","output":"Order 12 shipped."}
+		]
+	}`)
+
+	req := ParseRequest(EndpointResponses, body)
+	if len(req.Messages) != 2 {
+		t.Fatalf("Messages = %+v", req.Messages)
+	}
+	if req.Messages[0].Role != "user" || !strings.Contains(req.Messages[0].Content, "What is this?") {
+		t.Errorf("first message = %+v", req.Messages[0])
+	}
+	if strings.Contains(req.Messages[0].Content, "base64") || strings.Contains(req.Messages[0].Content, "AAAAAAAA") {
+		t.Errorf("image data was inlined into the transcript: %q", req.Messages[0].Content)
+	}
+	if !strings.Contains(req.Messages[0].Content, "[input_image]") {
+		t.Errorf("image part not noted by type: %q", req.Messages[0].Content)
+	}
+	if req.Messages[1].Role != "tool" || req.Messages[1].Content != "Order 12 shipped." {
+		t.Errorf("tool message = %+v", req.Messages[1])
+	}
+	want := []ToolResultMessage{{CallID: "call_1", Content: "Order 12 shipped."}}
+	if !reflect.DeepEqual(req.ToolResults, want) {
+		t.Errorf("ToolResults = %+v, want %+v", req.ToolResults, want)
+	}
+}
+
+// Tool results the caller sends back in a chat request live in role:"tool"
+// messages and must be surfaced as raw results, keyed by tool_call_id.
+func TestParseRequestChatExtractsToolResults(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[
+		{"role":"user","content":"Where is order 12?"},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup_order","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":"Order 12 shipped."}
+	]}`)
+
+	req := ParseRequest(EndpointChat, body)
+	want := []ToolResultMessage{{CallID: "call_1", Content: "Order 12 shipped."}}
+	if !reflect.DeepEqual(req.ToolResults, want) {
+		t.Errorf("ToolResults = %+v, want %+v", req.ToolResults, want)
+	}
+	// The tool message stays in the transcript too, exactly as the chat wire
+	// shape carries it.
+	if last := req.Messages[len(req.Messages)-1]; last.Role != "tool" || last.Content != "Order 12 shipped." {
+		t.Errorf("tool message not retained in transcript: %+v", last)
+	}
+}
+
+func TestParseRequestResponsesToleratesGarbage(t *testing.T) {
+	req := ParseRequest(EndpointResponses, []byte(`{not json at all`))
+	if req == nil {
+		t.Fatal("ParseRequest returned nil")
+	}
+	if req.Model != "" || len(req.Messages) != 0 || len(req.ToolResults) != 0 {
+		t.Errorf("expected an empty request, got %+v", req)
+	}
+}
+
+func TestParseResponseResponses(t *testing.T) {
+	body := []byte(`{
+		"id":"resp_1","object":"response","previous_response_id":"resp_0",
+		"model":"gpt-4o","status":"completed",
+		"output":[
+			{"type":"reasoning","id":"rs_1","summary":[]},
+			{"type":"message","id":"msg_1","role":"assistant","content":[
+				{"type":"output_text","text":"Order 12 shipped.","annotations":[]}]},
+			{"type":"function_call","id":"fc_1","call_id":"call_9","name":"lookup_order","arguments":"{\"id\":12}"}
+		],
+		"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15}
+	}`)
+
+	resp := ParseResponse(EndpointResponses, body)
+	if resp.ID != "resp_1" || resp.PreviousID != "resp_0" || resp.Model != "gpt-4o" {
+		t.Errorf("ID/PreviousID/Model = %q/%q/%q", resp.ID, resp.PreviousID, resp.Model)
+	}
+	if resp.Text != "Order 12 shipped." {
+		t.Errorf("Text = %q", resp.Text)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %+v", resp.ToolCalls)
+	}
+	if tc := resp.ToolCalls[0]; tc.ID != "call_9" || tc.Name != "lookup_order" || tc.Arguments != `{"id":12}` {
+		t.Errorf("ToolCall = %+v", tc)
+	}
+	if resp.Usage == nil || resp.Usage.PromptTokens != 11 || resp.Usage.CompletionTokens != 4 || resp.Usage.TotalTokens != 15 {
+		t.Errorf("Usage = %+v", resp.Usage)
+	}
+	if len(resp.FinishReasons) != 1 || resp.FinishReasons[0] != "completed" {
+		t.Errorf("FinishReasons = %v, want [completed]", resp.FinishReasons)
+	}
+}
+
+func TestParseResponseResponsesIncompleteReason(t *testing.T) {
+	body := []byte(`{
+		"id":"resp_2","status":"incomplete",
+		"incomplete_details":{"reason":"max_output_tokens"},
+		"output":[{"type":"message","content":[{"type":"output_text","text":"partial"}]}]
+	}`)
+
+	resp := ParseResponse(EndpointResponses, body)
+	if resp.Text != "partial" {
+		t.Errorf("Text = %q", resp.Text)
+	}
+	if len(resp.FinishReasons) != 1 || resp.FinishReasons[0] != "max_output_tokens" {
+		t.Errorf("FinishReasons = %v, want the incomplete reason", resp.FinishReasons)
+	}
+}
+
+func TestParseResponseResponsesToleratesGarbage(t *testing.T) {
+	resp := ParseResponse(EndpointResponses, []byte(`{broken`))
+	if resp == nil {
+		t.Fatal("ParseResponse returned nil")
+	}
+	if resp.Text != "" || len(resp.ToolCalls) != 0 {
+		t.Errorf("expected an empty response, got %+v", resp)
+	}
+}
+
+func TestParseStreamResponsesViaCompletedEvent(t *testing.T) {
+	final := `{"id":"resp_1","previous_response_id":"resp_0","model":"gpt-4o","status":"completed",` +
+		`"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Order 12 shipped."}]},` +
+		`{"type":"function_call","id":"fc_1","call_id":"call_9","name":"lookup_order","arguments":"{\"id\":12}"}],` +
+		`"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15}}`
+	stream := strings.Join([]string{
+		"event: response.created",
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-4o"}}`,
+		"",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"Order "}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":` + final + `}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	resp := ParseStream(EndpointResponses, []byte(stream))
+	if resp.Text != "Order 12 shipped." {
+		t.Errorf("Text = %q, want the completed event's assembled text", resp.Text)
+	}
+	if resp.ID != "resp_1" || resp.PreviousID != "resp_0" || resp.Model != "gpt-4o" {
+		t.Errorf("ID/PreviousID/Model = %q/%q/%q", resp.ID, resp.PreviousID, resp.Model)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Arguments != `{"id":12}` {
+		t.Errorf("ToolCalls = %+v", resp.ToolCalls)
+	}
+	if resp.Usage == nil || resp.Usage.TotalTokens != 15 {
+		t.Errorf("Usage = %+v", resp.Usage)
+	}
+	if len(resp.FinishReasons) != 1 || resp.FinishReasons[0] != "completed" {
+		t.Errorf("FinishReasons = %v", resp.FinishReasons)
+	}
+}
+
+func TestParseStreamResponsesViaDeltas(t *testing.T) {
+	stream := strings.Join([]string{
+		"event: response.created",
+		`data: {"type":"response.created","response":{"id":"resp_3","model":"gpt-4o","previous_response_id":"resp_2"}}`,
+		"",
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"Order "}`,
+		"",
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"12 "}`,
+		"",
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"shipped."}`,
+		"",
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_1","call_id":"call_9","name":"lookup_order","arguments":""}}`,
+		"",
+		`data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"id\":"}`,
+		"",
+		`data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"12}"}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	resp := ParseStream(EndpointResponses, []byte(stream))
+	if resp.Text != "Order 12 shipped." {
+		t.Errorf("Text = %q, want the reassembled deltas", resp.Text)
+	}
+	if resp.ID != "resp_3" || resp.Model != "gpt-4o" || resp.PreviousID != "resp_2" {
+		t.Errorf("ID/Model/PreviousID = %q/%q/%q", resp.ID, resp.Model, resp.PreviousID)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %+v", resp.ToolCalls)
+	}
+	if tc := resp.ToolCalls[0]; tc.ID != "call_9" || tc.Name != "lookup_order" || tc.Arguments != `{"id":12}` {
+		t.Errorf("ToolCall = %+v, want the concatenated arguments", tc)
+	}
+}
+
+// A single unparseable frame must not discard the surviving deltas.
+func TestParseStreamResponsesSkipsMalformedFrames(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"before "}`,
+		"",
+		`data: {"type":"response.output_text.delta` + "\n" + `{broken`,
+		"",
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"after"}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	resp := ParseStream(EndpointResponses, []byte(stream))
+	if resp.Text != "before after" {
+		t.Errorf("Text = %q, want the surviving frames assembled", resp.Text)
 	}
 }
 

@@ -159,6 +159,38 @@ func TestToolArgumentsFollowContentMode(t *testing.T) {
 	}
 }
 
+func TestToolResultPayloadFollowsContentMode(t *testing.T) {
+	const result = `{"account":"a@b.com","balance":4711}`
+	sum := sha256.Sum256([]byte(result))
+	wantDigest := hex.EncodeToString(sum[:])
+	r, _ := NewRedactor([]string{"email"})
+
+	textOK := map[string]func(string) bool{
+		evidence.ModeHash:  func(text string) bool { return text == "" },
+		evidence.ModeStore: func(text string) bool { return text == result },
+		evidence.ModeRedact: func(text string) bool {
+			return strings.Contains(text, "[REDACTED:email]") && !strings.Contains(text, "a@b.com")
+		},
+	}
+	for mode, ok := range textOK {
+		c := &Capturer{Mode: mode, Redactor: r}
+		got := c.ToolResultPayload("call_9", result)
+
+		if got.CallID != "call_9" {
+			t.Errorf("mode %s: CallID = %q, want call_9", mode, got.CallID)
+		}
+		if got.SHA256 != wantDigest {
+			t.Errorf("mode %s: SHA256 = %q, want the content digest in every mode", mode, got.SHA256)
+		}
+		if got.Bytes != len(result) {
+			t.Errorf("mode %s: Bytes = %d, want %d in every mode", mode, got.Bytes, len(result))
+		}
+		if !ok(got.Content) {
+			t.Errorf("mode %s: Content = %q", mode, got.Content)
+		}
+	}
+}
+
 func TestClientHashIsSaltedAndTruncated(t *testing.T) {
 	const credential = "Bearer sk-secret"
 	a := ClientHash([]byte("salt-one"), credential)

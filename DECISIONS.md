@@ -456,3 +456,78 @@ reported as warnings, never silently dropped, because a compliance document
 that quietly loses a character is worse than one that shows a seam. The PDF
 inherits the report timestamp, so --now produces byte-identical PDFs the way
 it does for Markdown and HTML.
+
+## D33. Routing peeks a bounded prefix of the request body
+
+Multi-upstream routing selects a model server by the requested model name, which
+lives in the request body. The proxy otherwise tees bodies without buffering
+(D5). Routing needs the model before it dials, so it reads a bounded prefix
+(1 MiB, a named constant), extracts the model with a tolerant scan, and then
+replays the peeked bytes followed by the untouched remainder.
+
+This is a deliberate, bounded exception to D5, not a reversal of it. The peek is
+capped, so a large or streamed body is never held in memory beyond the cap;
+streaming after the peek is unaffected; and the teed digest still covers the
+complete wire bytes because the reconstructed reader yields exactly what came
+in. When the model is not found within the cap, the record is marked truncated
+rather than routed on an empty model. The cost is one prefix read on a recorded
+request, which sits far under the proxy's existing latency budget.
+
+Single-upstream deployments do not peek at all: with no routes to choose
+between, there is nothing to read the model for.
+
+## D34. Tool results are recorded on the inference event, digested in every mode
+
+The results a tool returns come back as role:"tool" messages (chat) or
+function_call_output items (Responses). They are recorded as a tool_results
+array on the inference event, not as separate chain events, because chat clients
+resend the whole conversation each turn and a per-message event would duplicate
+one result into the chain once per subsequent turn.
+
+Each result carries a SHA-256 and byte count over its content in every content
+mode, exactly as tool-call arguments do, and the content text only in store
+mode, redacted in redact mode, absent in hash mode. Tool output is as sensitive
+as a prompt, so the hash-mode no-text guarantee extends to it, with a test that
+fails if a result's text reaches disk in hash mode.
+
+The digest is over the flattened content string the parser surfaces, which for
+an ordinary string-valued result is the wire content and for an array-valued
+result is the concatenated text parts. That basis is documented so a holder of
+the original can reproduce it.
+
+## D35. The Responses API is a recorded endpoint
+
+/v1/responses is captured like chat and completions: request input (string or
+item list), instructions, sampling parameters, tools, and previous_response_id
+(recorded as upstream_previous_id, the API's own turn linkage); response output
+text, function calls, usage and status. Streaming prefers the terminal
+response.completed event, which embeds the full final response, and falls back
+to accumulating output_text and function-call-argument deltas.
+
+An unrecorded endpoint on an increasingly default API shape is a silent coverage
+hole, which is the exact failure the tool exists to prevent. The audio and image
+endpoints remain out of scope: they are not the interaction an AI Act evidence
+log is usually about, and their bodies are binary.
+
+## D36. Both language editions are produced by default
+
+report generates the Annex IV skeleton and the Article 50 pack in English and
+German. --lang en or --lang de narrows the output; the default, both, emits
+every edition. The German technical documentation is a full native translation
+using the official Anhang IV terminology, not a string swap, and every character
+in it is representable in the PDF base fonts, so the PDF renders with no
+substitutions.
+
+Default-both keeps the historical behaviour a superset: nothing that was
+produced before stops being produced. The audience for the transparency pack and
+the technical documentation is often a German-speaking DPO, so German is a first
+class edition rather than an afterthought.
+
+## D37. The record schema is published as JSON Schema, kept honest by a test
+
+docs/schema/record.schema.json and event.schema.json describe the on-disk format
+for a third party writing their own verifier. A reflection test compares the
+struct json tags against the schema field names and fails on drift in either
+direction, so the published schema cannot fall behind the code. The test checks
+the field set, which catches the add-and-forget mistake; it does not assert
+every field's exact type or nesting, which the prose in docs/SCHEMA.md covers.

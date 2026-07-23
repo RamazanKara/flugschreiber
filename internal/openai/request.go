@@ -69,10 +69,13 @@ type rawRequest struct {
 	Messages         []rawMessage    `json:"messages"`
 	Prompt           json.RawMessage `json:"prompt"`
 	Input            json.RawMessage `json:"input"`
+	Instructions     string          `json:"instructions"`
+	PreviousResponse string          `json:"previous_response_id"`
 	Temperature      *float64        `json:"temperature"`
 	TopP             *float64        `json:"top_p"`
 	MaxTokens        *int            `json:"max_tokens"`
 	MaxCompletion    *int            `json:"max_completion_tokens"`
+	MaxOutput        *int            `json:"max_output_tokens"`
 	N                *int            `json:"n"`
 	Seed             *int64          `json:"seed"`
 	Stop             json.RawMessage `json:"stop"`
@@ -85,14 +88,29 @@ type rawRequest struct {
 }
 
 type rawMessage struct {
-	Role    string          `json:"role"`
-	Name    string          `json:"name"`
-	Content json.RawMessage `json:"content"`
+	Role       string          `json:"role"`
+	Name       string          `json:"name"`
+	Content    json.RawMessage `json:"content"`
+	ToolCallID string          `json:"tool_call_id"`
 }
 
+// rawTool covers both wire shapes. Chat tools nest the name under "function";
+// Responses function tools carry it at the top level.
 type rawTool struct {
 	Type     string      `json:"type"`
+	Name     string      `json:"name"`
 	Function rawFunction `json:"function"`
+}
+
+// rawResponsesItem is one element of a Responses API "input" array: a message,
+// a function_call_output (a tool result the caller sent back), or another item
+// type that carries no transcript text.
+type rawResponsesItem struct {
+	Type    string          `json:"type"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+	CallID  string          `json:"call_id"`
+	Output  json.RawMessage `json:"output"`
 }
 
 type rawFunction struct {
@@ -119,12 +137,25 @@ func ParseRequest(kind string, body []byte) *Request {
 	case EndpointChat:
 		req.Messages = make([]evidence.Message, 0, len(raw.Messages))
 		for _, m := range raw.Messages {
+			content := flattenContent(m.Content)
 			req.Messages = append(req.Messages, evidence.Message{
 				Role:    m.Role,
 				Name:    m.Name,
-				Content: flattenContent(m.Content),
+				Content: content,
 			})
+			// A role:"tool" message carries a tool result the caller sent
+			// back. Surface it raw; the content mode is applied downstream.
+			if m.Role == "tool" {
+				req.ToolResults = append(req.ToolResults, ToolResultMessage{
+					CallID:  m.ToolCallID,
+					Content: content,
+				})
+			}
 		}
+		req.Items = len(req.Messages)
+	case EndpointResponses:
+		req.PreviousID = raw.PreviousResponse
+		req.Messages, req.ToolResults = parseResponsesInput(raw.Instructions, raw.Input)
 		req.Items = len(req.Messages)
 	case EndpointCompletion:
 		parts := stringOrArray(raw.Prompt)
@@ -136,6 +167,50 @@ func ParseRequest(kind string, body []byte) *Request {
 		req.Items = len(parts)
 	}
 	return req
+}
+
+// parseResponsesInput renders the Responses API request into the message and
+// tool-result shapes the evidence record uses. "instructions" becomes a leading
+// system message; "input" is either a bare string (one user message) or an
+// array of items, of which messages become transcript messages and
+// function_call_output items become both a tool message and a raw tool result.
+// Unknown item types are skipped rather than aborting the parse.
+func parseResponsesInput(instructions string, input json.RawMessage) ([]evidence.Message, []ToolResultMessage) {
+	var msgs []evidence.Message
+	var results []ToolResultMessage
+	if instructions != "" {
+		msgs = append(msgs, evidence.Message{Role: "system", Content: instructions})
+	}
+	if len(input) == 0 {
+		return msgs, results
+	}
+	var s string
+	if json.Unmarshal(input, &s) == nil {
+		msgs = append(msgs, evidence.Message{Role: "user", Content: s})
+		return msgs, results
+	}
+	var items []rawResponsesItem
+	if json.Unmarshal(input, &items) != nil {
+		return msgs, results
+	}
+	for _, it := range items {
+		switch it.Type {
+		case "function_call_output":
+			content := flattenContent(it.Output)
+			results = append(results, ToolResultMessage{CallID: it.CallID, Content: content})
+			msgs = append(msgs, evidence.Message{Role: "tool", Content: content})
+		case "message", "":
+			if it.Role == "" && len(it.Content) == 0 {
+				continue
+			}
+			role := it.Role
+			if role == "" {
+				role = "user"
+			}
+			msgs = append(msgs, evidence.Message{Role: role, Content: flattenContent(it.Content)})
+		}
+	}
+	return msgs, results
 }
 
 func buildParams(raw *rawRequest) *evidence.Params {
@@ -152,6 +227,10 @@ func buildParams(raw *rawRequest) *evidence.Params {
 	if p.MaxTokens == nil {
 		p.MaxTokens = raw.MaxCompletion
 	}
+	if p.MaxTokens == nil {
+		// The Responses API spells the output-token cap differently.
+		p.MaxTokens = raw.MaxOutput
+	}
 	if len(raw.ResponseFormat) > 0 {
 		var rf struct {
 			Type string `json:"type"`
@@ -164,8 +243,12 @@ func buildParams(raw *rawRequest) *evidence.Params {
 		p.ToolChoice = describeToolChoice(raw.ToolChoice)
 	}
 	for _, t := range raw.Tools {
-		if t.Function.Name != "" {
+		switch {
+		case t.Function.Name != "":
 			p.ToolsOffered = append(p.ToolsOffered, t.Function.Name)
+		case t.Name != "":
+			// Responses function tools name the function at the top level.
+			p.ToolsOffered = append(p.ToolsOffered, t.Name)
 		}
 	}
 	for _, f := range raw.Functions {

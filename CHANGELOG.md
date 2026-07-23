@@ -6,6 +6,25 @@ appears in both places or it did not happen.
 
 ## Unreleased
 
+### v0.2.0 Coverage (in progress)
+
+- The OpenAI Responses API (`/v1/responses`) is recorded like chat and
+  completions, streamed and not, including `previous_response_id`.
+- Multiple model servers behind one instance: `config.upstreams` routes by
+  model glob and endpoint kind, each route with its own TLS and API key.
+- Tool results are recorded on the inference event, digested in every content
+  mode, with the hash-mode no-text guarantee extended to them.
+- `report --lang en|de|both` selects the language editions. A full native German
+  Annex IV skeleton (`technical-documentation-de.md`) ships alongside the
+  English one; both render to HTML and PDF.
+- The Helm chart's verify and retention CronJobs work in sidecar mode too, and
+  refuse to install without an evidence claim they can mount.
+- A Grafana dashboard and Prometheus alert rules ship under `deploy/observability`
+  and through the chart.
+- The record format is published as JSON Schema under `docs/schema`, kept in
+  sync with the code by a test.
+
+
 - The generated Annex IV now tells the truth about the shipped product:
   section 3.4 reports signed checkpoints, attestation state and the key id;
   section 3.3 describes the real enforcement path and reports a pruned log as

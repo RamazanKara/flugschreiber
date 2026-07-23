@@ -1,0 +1,88 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- include "flugschreiber.validate" . -}}
+{{- $pr := .Values.prometheusRule }}
+{{- if not (or ($.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") $pr.skipCRDCheck) }}
+{{- fail "prometheusRule.enabled is true but monitoring.coreos.com/v1 is not present in this cluster, so the alerts would not be loaded and nothing would say why. Install the Prometheus Operator, or set prometheusRule.skipCRDCheck=true when rendering offline with `helm template`." }}
+{{- end }}
+{{- /*
+Alerts over the exported metrics. The Prometheus Operator selects rule objects
+by label (its ruleSelector), so set prometheusRule.labels to whatever your
+Prometheus selects on, commonly a release label. The archive-failure threshold
+is the one knob worth tuning; the rest are fixed with comments on why.
+The $labels and $value references are Prometheus templates, escaped here so Helm
+passes them through untouched.
+*/ -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}
+  {{- with $pr.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+    {{- with $pr.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with (merge (dict) $pr.annotations .Values.commonAnnotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+    - name: flugschreiber.rules
+      rules:
+        # A capture error is an interaction that was not fully recorded, which
+        # is the one failure this tool exists to prevent. Any occurrence in the
+        # last ten minutes fires; the 5m `for` keeps a single transient from
+        # paging while still surfacing a persistent one.
+        - alert: FlugschreiberCaptureErrors
+          expr: sum without (reason) (increase(flugschreiber_capture_errors_total[10m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+            {{- with $pr.additionalLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          annotations:
+            summary: 'Flugschreiber is failing to record interactions on {{`{{ $labels.instance }}`}}'
+            description: '{{`{{ $value | printf "%.2f" }}`}} interactions in the last 10 minutes were not fully captured. Evidence for them is incomplete or missing. Check the proxy logs for the capture error reason.'
+        # Archived copies are the off-host guard against a rewrite of the local
+        # volume. A sustained failure ratio among real upload attempts (success
+        # plus failure, ignoring the skipped no-ops for objects already present)
+        # means the second copy is falling behind.
+        - alert: FlugschreiberArchiveUploadFailing
+          expr: |-
+            sum without (result) (rate(flugschreiber_archive_uploads_total{result="failure"}[15m]))
+              /
+            sum without (result) (rate(flugschreiber_archive_uploads_total{result=~"failure|success"}[15m]))
+              > {{ $pr.archiveFailureRatio }}
+          for: 15m
+          labels:
+            severity: warning
+            {{- with $pr.additionalLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          annotations:
+            summary: 'Flugschreiber archive uploads are failing on {{`{{ $labels.instance }}`}}'
+            description: '{{`{{ $value | humanizePercentage }}`}} of archive upload attempts to backend {{`{{ $labels.backend }}`}} are failing. Sealed segments are not reaching the second location. Check the backend credentials, bucket and connectivity.'
+        # The shape of a capture stall: requests keep flowing but the evidence on
+        # disk stops growing. This catches a wedged writer that the capture-error
+        # counter would miss, because no append is being attempted to fail. A
+        # retention prune can shrink the gauge briefly; the 15m `for` rides over
+        # that.
+        - alert: FlugschreiberCaptureStalled
+          expr: |-
+            (sum by (job, instance) (rate(flugschreiber_requests_total[15m])) > 0)
+              and
+            (sum by (job, instance) (delta(flugschreiber_evidence_bytes[15m])) <= 0)
+          for: 15m
+          labels:
+            severity: critical
+            {{- with $pr.additionalLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          annotations:
+            summary: 'Flugschreiber is serving traffic but recording nothing on {{`{{ $labels.instance }}`}}'
+            description: 'Requests are being proxied but the evidence on disk has not grown in 15 minutes. Interactions may be reaching the model and going unrecorded. Check the proxy logs and that the evidence volume is writable.'
+{{- end }}
