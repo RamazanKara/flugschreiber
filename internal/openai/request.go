@@ -18,6 +18,7 @@ const (
 	EndpointChat       = "chat"
 	EndpointCompletion = "completion"
 	EndpointEmbedding  = "embedding"
+	EndpointResponses  = "responses"
 	EndpointOther      = "other"
 )
 
@@ -25,6 +26,8 @@ const (
 // suffix so that upstreams mounted under a prefix still classify correctly.
 func ClassifyPath(path string) string {
 	switch {
+	case strings.HasSuffix(path, "/responses"):
+		return EndpointResponses
 	case strings.HasSuffix(path, "/chat/completions"):
 		return EndpointChat
 	case strings.HasSuffix(path, "/completions"):
@@ -44,6 +47,20 @@ type Request struct {
 	Messages []evidence.Message
 	Text     string
 	Items    int
+
+	// PreviousID carries the Responses API previous_response_id.
+	PreviousID string
+
+	// ToolResults holds tool outputs the caller sent back, from chat
+	// tool-role messages or Responses function_call_output items.
+	ToolResults []ToolResultMessage
+}
+
+// ToolResultMessage is one tool output present in a request, before the content
+// mode is applied.
+type ToolResultMessage struct {
+	CallID  string
+	Content string
 }
 
 type rawRequest struct {

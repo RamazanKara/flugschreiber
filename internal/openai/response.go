@@ -12,6 +12,7 @@ import (
 // arrived as one JSON body or as a stream of SSE frames.
 type Response struct {
 	ID            string
+	PreviousID    string
 	Model         string
 	Text          string
 	FinishReasons []string
