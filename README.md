@@ -287,6 +287,7 @@ critical path.
 ## Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) is the package map and the invariants, enforced by a test
+- [ROADMAP.md](ROADMAP.md) is what is missing, in what order, and why that order
 - [docs/tamper-evident-llm-audit-logs-on-kubernetes.md](docs/tamper-evident-llm-audit-logs-on-kubernetes.md) is the Kubernetes guide
 - [MAPPING.md](MAPPING.md) maps every schema field to the provision it supports (Articles 12, 19, 26, 50) and says where the support runs out
 - [docs/SCHEMA.md](docs/SCHEMA.md) is the log format and the compatibility policy
