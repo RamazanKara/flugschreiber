@@ -1,0 +1,147 @@
+{{- $s := .Summary -}}
+{{- $system := fill .Deployment.SystemName "Name Ihres Systems" -}}
+{{- $org := fill .Deployment.Organisation "Name Ihrer Organisation" -}}
+# Transparenzpaket nach Artikel 50 (Deutsch)
+
+Erstellt von Flugschreiber {{ .Version }} am {{ stamp .Now }}.
+
+> Artikel 50 der KI-Verordnung enthält Transparenzpflichten, die unabhängig davon gelten,
+> ob ein System als Hochrisiko-System eingestuft ist. Nach dem Zeitplan im Anschluss an die
+> Einigung zum Digital Omnibus gelten sie ab dem **2. August 2026**.
+>
+> Die folgenden Textbausteine sind Entwurfsgrundlagen, keine Rechtsberatung und keine
+> freigegebenen Texte. Lassen Sie sie von den Personen prüfen, die in Ihrer Organisation
+> für nutzerseitige Formulierungen und die rechtliche Freigabe zuständig sind. Nichts
+> davon stellt Konformität her; es gibt Ihnen etwas Konkretes zum Prüfen.
+
+## 1. Wen das betrifft
+
+Artikel 50 Absatz 1 richtet sich an **Anbieter** von KI-Systemen, die für die direkte
+Interaktion mit natürlichen Personen bestimmt sind: Das System muss so gestaltet sein, dass
+die betroffenen Personen erfahren, dass sie mit einem KI-System interagieren, es sei denn,
+dies ist aus Sicht einer angemessen informierten Person unter den Umständen der Nutzung
+offensichtlich.
+
+Artikel 50 Absatz 2 richtet sich an Anbieter von KI-Systemen, die synthetische Audio-,
+Bild-, Video- oder Textinhalte erzeugen: Die Ausgaben müssen in einem maschinenlesbaren
+Format gekennzeichnet und als künstlich erzeugt oder manipuliert erkennbar sein.
+
+Artikel 50 Absatz 4 richtet sich an **Betreiber**, die Systeme zur Emotionserkennung oder
+zur biometrischen Kategorisierung einsetzen, sowie an Betreiber, die Inhalte erzeugen oder
+manipulieren, die einen Deepfake darstellen.
+
+{{ if $s.Observed -}}
+*Beobachtet.* Über diese Installation wurden im Zeitraum {{ $s.Window }}
+{{ $s.Inference }} Inferenz-Anfragen an {{ len $s.Endpoints }} Endpunkt(e) weitergeleitet.
+Flugschreiber kann erkennen, dass Texte generiert werden; es kann nicht erkennen, ob die
+Ausgabe unmittelbar eine natürliche Person erreicht. Diese Einordnung müssen Sie treffen.
+{{- end }}
+
+## 2. Chatbot-Hinweis, Kurzform
+
+Zur direkten Verwendung in der Chat-Oberfläche, vor oder mit dem ersten Austausch.
+
+```
+Sie chatten mit einer KI, nicht mit einem Menschen.
+```
+
+Etwas ausführlicher, wenn ein Link zur Verfügung steht:
+
+```
+Sie chatten mit einer KI, nicht mit einem Menschen. Die Antworten werden automatisch
+erzeugt und können fehlerhaft sein. Mehr erfahren.
+```
+
+## 3. Chatbot-Hinweis als erste Nachricht
+
+Zum Voranstellen vor die erste Antwort des Assistenten.
+
+```
+Hallo. Vorab: Ich bin ein KI-Assistent von {{ $org }} und kein Mensch. Meine
+Antworten werden automatisch erzeugt und können falsch sein, auch inhaltlich. Wenn Sie
+eine Person sprechen möchten, sagen Sie Bescheid, ich leite Sie weiter.
+```
+
+## 4. Dauerhafter Hinweis in der Oberfläche
+
+Für ein dauerhaftes Label neben dem Eingabefeld oder in der Kopfzeile.
+
+```
+KI-Assistent. Antworten werden automatisch erzeugt
+```
+
+## 5. Ausführliche Systembeschreibung
+
+Für eine Hilfeseite, die Nutzungsbedingungen oder eine Systembeschreibung.
+
+```
+{{ $system }} setzt ein KI-System ein, das Antworten automatisch erzeugt.
+
+Was das für Sie bedeutet:
+
+- Sie interagieren mit Software, nicht mit einer Mitarbeiterin oder einem Mitarbeiter.
+- Die Antworten stammen aus einem Sprachmodell und können unvollständig oder falsch
+  sein. Verlassen Sie sich für {{ fill .Deployment.Purpose "den Zweck, für den dieses System eingesetzt wird" }}
+  nicht ungeprüft darauf.
+- Ihre Eingaben werden zur Erzeugung einer Antwort verarbeitet und zu Nachweiszwecken
+  protokolliert. Was dabei gespeichert wird und wie lange, entnehmen Sie bitte unseren
+  Datenschutzhinweisen.
+- Eine Person erreichen Sie unter {{ fill .Deployment.Contact "Ihr Support-Kontakt" }}.
+
+Betrieben von {{ $org }}.
+```
+
+{{ todo "Prüfen Sie, ob der Satz zur Protokollierung dem entspricht, was tatsächlich gespeichert wird. Im Standardmodus speichert Flugschreiber einen kryptografischen Hash der Ein- und Ausgaben, nicht den Text selbst. In dieser Konfiguration wäre die Aussage, Gespräche würden gespeichert, zu weitgehend." }}
+
+## 6. Hinweise zur Kennzeichnung KI-erzeugter Inhalte
+
+Artikel 50 Absatz 2 verlangt eine maschinenlesbare Kennzeichnung synthetischer Ausgaben.
+Dieser Punkt wird am häufigsten übersehen, weil ein sichtbarer Hinweis allein dafür nicht
+ausreicht.
+
+**Worum es geht.** Um eine Kennzeichnung, die maschinenlesbar ist und die übliche
+Weiterverarbeitung des Inhalts übersteht. Ein sichtbarer Hinweis in der Oberfläche erfüllt
+Absatz 1; Absatz 2 erfüllt er nicht, weil er den Inhalt nicht begleitet, sobald dieser
+herauskopiert wird.
+
+**Ansätze, grob nach Praxistauglichkeit für ein textgenerierendes System:**
+
+1. **Provenienz-Metadaten (C2PA / Content Credentials).** Der am weitesten entwickelte
+   Standard für Bild, Audio und Video. Hängt signierte Herkunftsinformationen an die Datei.
+   Für Medien gut unterstützt, für reinen Text schwächer.
+2. **Eingebettete Metadaten.** Für Dateien, die Ihr System ausgibt: Generator und
+   Erzeugungszeitpunkt in die üblichen Metadatenfelder schreiben. Günstig umzusetzen,
+   leicht zu entfernen, aber eine echte Kennzeichnung und keine dekorative.
+3. **Wasserzeichen im generierten Text.** Statistische Wasserzeichen existieren, sind
+   aber gegenüber Umformulierung und Bearbeitung nicht robust, und ihre Anwendung setzt
+   Kontrolle über den Decoding-Schritt im Modellserver voraus. Für die meisten
+   selbstgehosteten Installationen ist das derzeit nicht praktikabel.
+4. **Kennzeichnung an der Systemgrenze.** Wo generierter Text in Dokumente, Tickets,
+   E-Mails oder Datensätze geschrieben wird, dort kennzeichnen, also ein Feld am Datensatz, das
+   festhält, welches Modell den Text wann erzeugt hat. Das ist der Ansatz, den die meisten
+   selbstgehosteten Installationen tatsächlich umsetzen können; die Request-ID von
+   Flugschreiber liefert dabei den Schlüssel, der das gekennzeichnete Artefakt mit dem
+   Nachweisprotokoll verbindet.
+
+**Ausnahmen, die zu prüfen sind.** Die Pflicht ist abgeschwächt, wenn das KI-System eine
+unterstützende Funktion für die Standardbearbeitung ausübt und die Eingabedaten nicht
+wesentlich verändert; außerdem bestehen Ausnahmen für Inhalte, die einer menschlichen
+Überprüfung unterliegen und für die eine redaktionelle Verantwortung getragen wird. Beide
+sind enger gefasst, als meist angenommen wird. Prüfen Sie den aktuellen Wortlaut.
+
+{{ todo "Entscheiden Sie für jeden Kanal, über den generierte Inhalte Ihr System verlassen, welcher der genannten Ansätze greift, und halten Sie die Entscheidung fest. „Wir zeigen einen Hinweis im Chatfenster“ ist eine Antwort auf Absatz 1 und braucht eine eigene Antwort für Absatz 2." }}
+
+## 7. Checkliste zur Platzierung
+
+- [ ] Hinweis erscheint vor oder mit der ersten Interaktion, nicht nur in den Einstellungen
+- [ ] Hinweis ist auf Mobilgeräten lesbar und nicht hinter Tooltip oder Aufklapper versteckt
+- [ ] Hinweis erscheint auch bei Deep Links, die die Startseite überspringen
+- [ ] Sprach- und Telefonkanäle enthalten eine hörbare Entsprechung
+- [ ] Eingebettete oder unter fremder Marke ausgelieferte Instanzen enthalten ihn ebenfalls
+- [ ] Der Weg zu einer Person ist benannt und funktioniert
+- [ ] Maschinenlesbare Kennzeichnung je Ausgabekanal entschieden, nicht nur für die Chat-Oberfläche
+- [ ] Formulierungen von der zuständigen Stelle für Recht und nutzerseitige Texte geprüft
+
+## 8. Entscheidungsdokumentation
+
+{{ todo "Halten Sie fest, welche Bausteine Sie übernommen haben, wo sie jeweils angezeigt werden, wer die Formulierung freigegeben hat und an welchem Datum. Diese Aufstellung ist selbst ein brauchbarer Nachweis und kostet fünf Minuten Pflege." }}

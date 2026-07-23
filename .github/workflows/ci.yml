@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Verify no dependencies crept in
+        run: |
+          if grep -q '^require' go.mod; then
+            echo "go.mod gained a dependency. That is allowed, but it needs an entry in DECISIONS.md (see D1)."
+            exit 1
+          fi
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l ./cmd ./internal ./test)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -race -count=1 ./...
+
+      - name: Coverage
+        run: |
+          go test -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -func=coverage.out | tail -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  # The acceptance demo is the definition of done, so it gates every merge on
+  # the same platforms users run it on.
+  acceptance:
+    name: Acceptance demo (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Run the quickstart end to end
+        run: go test -count=1 -v -run TestQuickstartEndToEnd ./test/
+
+  docker:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: flugschreiber:ci
+          build-args: |
+            VERSION=ci-${{ github.sha }}
+            COMMIT=${{ github.sha }}
+
+      # A container that builds but cannot write to its own volume is a
+      # container that fails on a user's first command, so the quickstart
+      # invocation itself is tested.
+      - name: Run the documented quickstart command
+        run: |
+          docker run -d --rm --name fs \
+            --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            -p 8080:8080 -v fs-evidence:/var/lib/flugschreiber \
+            flugschreiber:ci serve --mock-upstream
+
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:8080/healthz && break
+            sleep 0.25
+          done
+
+          curl -sf http://127.0.0.1:8080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"m","messages":[{"role":"user","content":"ci"}]}' > /dev/null
+
+          curl -sfN http://127.0.0.1:8080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"m","stream":true,"messages":[{"role":"user","content":"ci stream"}]}' > /dev/null
+
+          docker exec fs flugschreiber verify --dir /var/lib/flugschreiber
+          docker exec fs flugschreiber report --dir /var/lib/flugschreiber --out /tmp/reports
+          docker rm -f fs
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: flugschreiber:ci
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+  # The generated documents carry claims we have committed to not making. A
+  # grep is a cheap way to keep that promise honest as the copy evolves.
+  honest-framing:
+    name: Honest framing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for compliance claims
+        run: |
+          set +e
+          patterns='makes you compliant|ensures compliance|guarantees compliance|fully compliant|achieve compliance|compliance guaranteed'
+          hits=$(grep -rniE "$patterns" \
+            --include='*.md' --include='*.tmpl' --include='*.go' \
+            . | grep -v '^./DECISIONS.md' | grep -v '_test.go')
+          if [ -n "$hits" ]; then
+            echo "Found copy claiming to confer compliance:"
+            echo "$hits"
+            echo
+            echo "Flugschreiber produces evidence and documentation inputs. Reword it."
+            exit 1
+          fi
+          echo "No compliance claims found."

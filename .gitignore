@@ -1,0 +1,5 @@
+reports/
+/flugschreiber
+/proxyd
+/dist/
+*.tar.gz

@@ -1,0 +1,54 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - gocritic
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+    - usetesting
+
+  settings:
+    errcheck:
+      # Close and Flush on a best-effort cleanup path, and Fprintf to an
+      # http.ResponseWriter, have no useful error to act on.
+      exclude-functions:
+        - (io.Closer).Close
+        - (net/http.ResponseWriter).Write
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+        - name: package-comments
+          disabled: false
+    misspell:
+      # The project documents EU regulation and uses British spelling
+      # throughout ("organisation", "minimisation").
+      locale: UK
+
+  exclusions:
+    rules:
+      # Tests deliberately ignore errors on cleanup paths and construct
+      # deeply nested literals.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocritic
+          - noctx
+
+formatters:
+  enable:
+    - gofmt
