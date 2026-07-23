@@ -1,0 +1,40 @@
+# GitHub Pages configuration. The site is the repository's own Markdown:
+# README as the index, the docs pages as pages, nothing written twice. The
+# Markdown stays the source of truth here exactly as it does for the generated
+# reports.
+title: Flugschreiber
+description: >-
+  Tamper-evident audit logs and EU AI Act documentation inputs for self-hosted
+  LLMs. One base URL change, no application code.
+url: "https://ramazankara.github.io"
+baseurl: "/flugschreiber"
+
+theme: jekyll-theme-primer
+
+plugins:
+  - jekyll-readme-index
+  - jekyll-relative-links
+  - jekyll-titles-from-headings
+
+relative_links:
+  enabled: true
+  collections: true
+
+titles_from_headings:
+  strip_title: true
+
+# Code, packaging and internal scratch stay off the published site.
+exclude:
+  - cmd/
+  - internal/
+  - test/
+  - deploy/
+  - scripts/
+  - dist/
+  - Makefile
+  - Dockerfile
+  - go.mod
+  - LICENSE
+  - CONTRIBUTING.md
+  - docs/launch-posts.md
+  - vendor/

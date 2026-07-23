@@ -354,7 +354,7 @@ the evidence.
 
 Evidence volume sizing depends on the content mode. In `hash` mode a record is
 around 600 bytes, so a million interactions is well under a gigabyte. In `store`
-mode it depends entirely on your prompt sizes; measure for a day before
+mode the volume scales with your prompt sizes; measure for a day before
 committing to a size.
 
 ## Before you call it done

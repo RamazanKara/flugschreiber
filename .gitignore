@@ -3,3 +3,4 @@ reports/
 /proxyd
 /dist/
 *.tar.gz
+.demo/

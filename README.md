@@ -18,7 +18,11 @@ log, and it generates the technical documentation and transparency artifacts
 that AI Act preparation needs as inputs, pre-filled from traffic it actually
 observed.
 
-<!-- GIF pending: record with scripts/demo.sh, see "Recording the demo" below. -->
+![The 30 second demo: serve, call, verify, tamper, report](docs/media/demo.gif)
+
+<sub>The same recording as an [mp4](docs/media/demo.mp4). Rendered from
+[scripts/demo.sh](scripts/demo.sh) against the built-in mock upstream, so what
+it shows is exactly what the quickstart below does.</sub>
 
 ## Sixty seconds
 
@@ -302,9 +306,9 @@ against the current text before you plan around them.
 | 2 December 2027 | Annex III high-risk obligations |
 | 2 August 2028 | Annex I obligations |
 
-One nuance inside the first row: Article 50(2) machine-readable marking applies from
-2 December 2026 for systems already on the market on 2 August 2026, while the 50(1)
-interaction disclosure is not deferred.
+Within the first row, one duty starts later: Article 50(2) machine-readable marking
+applies from 2 December 2026 for systems already on the market on 2 August 2026. The
+50(1) interaction disclosure is not deferred.
 
 ## Building from source
 
@@ -323,13 +327,10 @@ corresponding entry in DECISIONS.md.
 
 ### Recording the demo
 
-```bash
-asciinema rec demo.cast -c ./scripts/demo.sh --overwrite
-agg --cols 92 --rows 30 --font-size 16 --speed 1.0 demo.cast docs/demo.gif
-```
-
-`scripts/demo.sh` is the exact sequence in the GIF, and `DEMO_SPEED=0` runs it
-without the typing pauses.
+`scripts/demo.sh` is the exact sequence in the demo animation; `DEMO_SPEED=0`
+runs it without the typing pauses. The committed GIF and mp4 under `docs/media`
+are rendered from its transcript, so re-recording after a change is: run the
+script, re-render, commit.
 
 ## Commands
 

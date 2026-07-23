@@ -40,7 +40,7 @@ func (p ParamRange) String() string {
 	if p.Min == p.Max {
 		return trimFloat(p.Min)
 	}
-	return trimFloat(p.Min) + " – " + trimFloat(p.Max)
+	return trimFloat(p.Min) + " to " + trimFloat(p.Max)
 }
 
 // Summary is everything the documentation generator learned from the evidence

@@ -83,8 +83,8 @@ received.
 
 | Parameter | Range observed | Requests |
 | --- | --- | ---: |
-| `max_tokens` | 256 – 1024 | 3 |
-| `temperature` | 0 – 0.7 | 3 |
+| `max_tokens` | 256 to 1024 | 3 |
+| `temperature` | 0 to 0.7 | 3 |
 | `top_p` | 0.95 | 1 |
 
 ### 2.2 Tools and function calling
@@ -256,9 +256,9 @@ current text before relying on them.
 | 2 December 2027 | Annex III high-risk obligations |
 | 2 August 2028 | Annex I obligations |
 
-One nuance inside the first row: the machine-readable marking duty in Article 50(2)
-applies from 2 December 2026 for systems already on the market on 2 August 2026. The
-interaction disclosure in Article 50(1) is not deferred.
+Within the first row, one duty starts later: the machine-readable marking in
+Article 50(2) applies from 2 December 2026 for systems already on the market on
+2 August 2026. The interaction disclosure in Article 50(1) is not deferred.
 
 ## Appendix B: how this document was produced
 
