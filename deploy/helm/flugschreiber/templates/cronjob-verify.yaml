@@ -1,0 +1,106 @@
+{{- if eq .Values.mode "central" }}
+{{- if .Values.verify.enabled }}
+{{- $v := .Values.verify }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}-verify
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: verify
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ $v.schedule | quote }}
+  {{- with $v.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  # Two verifiers walking the same chain at once tell you nothing extra and
+  # compete for the same volume.
+  concurrencyPolicy: {{ $v.concurrencyPolicy }}
+  startingDeadlineSeconds: {{ $v.startingDeadlineSeconds }}
+  suspend: {{ $v.suspend }}
+  # Failed Jobs are kept, because a failed Job is the alert. Whatever already
+  # watches for failed Jobs is what pages someone when the chain breaks.
+  failedJobsHistoryLimit: {{ $v.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ $v.successfulJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "flugschreiber.labels" . | nindent 8 }}
+        app.kubernetes.io/component: verify
+    spec:
+      # One attempt. `verify` is a deterministic function of the files on disk,
+      # so a retry cannot produce a different answer, and a retry that passed
+      # after a failure would hide the failure.
+      backoffLimit: {{ $v.backoffLimit }}
+      activeDeadlineSeconds: {{ $v.activeDeadlineSeconds }}
+      template:
+        metadata:
+          {{- with $v.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          labels:
+            {{- include "flugschreiber.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: verify
+            {{- with $v.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        spec:
+          restartPolicy: {{ $v.restartPolicy }}
+          serviceAccountName: {{ include "flugschreiber.serviceAccountName" . }}
+          automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+          {{- with .Values.image.pullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: verify
+              image: {{ include "flugschreiber.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - verify
+                - --dir
+                - {{ .Values.config.dataDir }}
+                {{- if $v.json }}
+                - --json
+                {{- end }}
+                {{- with $v.extraArgs }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- with $v.extraEnv }}
+              env:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              resources:
+                {{- toYaml $v.resources | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              volumeMounts:
+                # Read-only, and not negotiable. A verifier that can write to
+                # what it verifies is not a verifier.
+                - name: evidence
+                  mountPath: {{ .Values.config.dataDir }}
+                  readOnly: true
+          volumes:
+            - name: evidence
+              {{- include "flugschreiber.evidenceVolume" . | nindent 14 }}
+          {{- with $v.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $v.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $v.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,4 @@
+{"time":"2026-07-23T06:27:31.642690696+02:00","level":"INFO","msg":"mock upstream started","addr":"http://127.0.0.1:38769","model":"flugschreiber-mock-1"}
+{"time":"2026-07-23T06:27:31.650586445+02:00","level":"INFO","msg":"flugschreiber listening","version":"dev (96cc8efcb6e5)","listen":"127.0.0.1:8080","upstream":"http://127.0.0.1:38769","data_dir":".demo/evidence","content_mode":"hash","retention_days":180}
+{"time":"2026-07-23T06:27:42.865272693+02:00","level":"INFO","msg":"shutting down, draining evidence queue"}
+{"time":"2026-07-23T06:27:42.867298235+02:00","level":"INFO","msg":"stopped","records_written":3}

@@ -1,0 +1,184 @@
+{{- if eq .Values.mode "central" }}
+{{- include "flugschreiber.validate" . -}}
+{{- $port := include "flugschreiber.port" . -}}
+{{- $scheme := ternary "HTTPS" "HTTP" .Values.tls.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # One writer, always. The value is not templated from .Values.replicas on
+  # purpose: a chain has one owner, and a typo in a values file is not a good
+  # enough reason to break it. flugschreiber.validate rejects any other value
+  # with an explanation before this renders.
+  replicas: 1
+  strategy:
+    # Recreate, because a rolling update would briefly have two pods holding
+    # the same evidence volume, which is the one thing the chain cannot survive.
+    # The cost is a few seconds of downtime on every upgrade.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "flugschreiber.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- $annotations := merge (dict) .Values.podAnnotations }}
+      {{- if .Values.config.file.enabled }}
+      {{- $_ := set $annotations "checksum/config" (include "flugschreiber.configJSON" . | sha256sum) }}
+      {{- end }}
+      {{- if .Values.secret.create }}
+      {{- $_ := set $annotations "checksum/secret" (include (print $.Template.BasePath "/secret.yaml") . | sha256sum) }}
+      {{- end }}
+      {{- with $annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "flugschreiber.proxySelectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "flugschreiber.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Long enough to finish in-flight streamed responses, drain the evidence
+      # queue and fsync. A clean termination loses nothing; a kill -9 loses at
+      # most the records written in the last second.
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.dnsPolicy }}
+      dnsPolicy: {{ . }}
+      {{- end }}
+      {{- with .Values.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: flugschreiber
+          image: {{ include "flugschreiber.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            {{- if .Values.config.file.enabled }}
+            - --config
+            - {{ printf "%s/config.json" (trimSuffix "/" .Values.config.file.mountPath) }}
+            {{- end }}
+            {{- with .Values.config.checkpointInterval }}
+            - --checkpoint-interval
+            - {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            {{- include "flugschreiber.env" (dict "root" . "listen" .Values.config.listen) | nindent 12 }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $port }}
+              protocol: TCP
+          {{- if .Values.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: {{ $scheme }}
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+            successThreshold: {{ .Values.livenessProbe.successThreshold }}
+          {{- end }}
+          {{- if .Values.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+              scheme: {{ $scheme }}
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+            successThreshold: {{ .Values.readinessProbe.successThreshold }}
+          {{- end }}
+          {{- if .Values.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: {{ $scheme }}
+            initialDelaySeconds: {{ .Values.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: evidence
+              mountPath: {{ .Values.config.dataDir }}
+            {{- if .Values.config.file.enabled }}
+            - name: config
+              mountPath: {{ .Values.config.file.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: {{ .Values.tls.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: evidence
+          {{- include "flugschreiber.evidenceVolume" . | nindent 10 }}
+        {{- if .Values.config.file.enabled }}
+        - name: config
+          configMap:
+            name: {{ include "flugschreiber.fullname" . }}
+        {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.existingSecret }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

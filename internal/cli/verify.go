@@ -83,13 +83,31 @@ func printVerify(res *evidence.VerifyResult) {
 	}
 	fmt.Printf("  checked in  %s\n", res.Duration)
 
-	if len(res.Problems) > 0 {
-		fmt.Printf("\n%d problem(s) found:\n\n", len(res.Problems))
-		for _, p := range res.Problems {
-			fmt.Printf("  %s\n", p)
+	if len(res.Problems) == 0 {
+		return
+	}
+
+	fmt.Printf("\n%d problem(s) found:\n\n", len(res.Problems))
+	var high int
+	for _, p := range res.Problems {
+		if p.Severity == evidence.SeverityHigh {
+			high++
 		}
-		fmt.Printf("\nA broken chain does not by itself prove tampering — an unclean shutdown\n")
-		fmt.Printf("can truncate the final record — but the affected records can no longer be\n")
-		fmt.Printf("relied on as evidence.\n")
+		if p.Severity != "" {
+			fmt.Printf("  [%s] %s\n", p.Severity, p)
+			continue
+		}
+		fmt.Printf("  %s\n", p)
+	}
+
+	fmt.Printf("\nA broken chain does not by itself prove tampering, because an unclean\n")
+	fmt.Printf("shutdown can truncate the final record. But the affected records can no\n")
+	fmt.Printf("longer be relied on as evidence.\n")
+
+	if high > 0 {
+		fmt.Printf("\n%d problem(s) are high severity. A checkpoint that is validly signed\n", high)
+		fmt.Printf("and disagrees with the chain, or a chain that contradicts its own prune\n")
+		fmt.Printf("anchor, is what a rewritten log looks like. Preserve this directory as\n")
+		fmt.Printf("it stands before doing anything else with it.\n")
 	}
 }

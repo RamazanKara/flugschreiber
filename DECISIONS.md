@@ -214,3 +214,210 @@ the organisation does not exist yet.
 Settle this before the first tagged release. Changing it later is a breaking
 change for anyone importing the packages, though nothing outside `cmd/` is
 exported today.
+
+## D15. The events endpoint is off until an operator sets a token
+
+`POST /flugschreiber/v1/events` records human oversight into the chain. It
+returns 404 until `--events-token` is set.
+
+An unauthenticated endpoint that appends to the evidence log would let anyone who
+can reach the proxy fabricate an oversight record. A forged "reviewed and
+approved by Alice" in a tamper-evident log is worse than no record at all,
+because the chain makes it look authoritative. Requiring a token forces the
+operator to make a decision about who may write oversight events.
+
+The cost is one more thing to configure before the feature works. The 404 names
+the flag, so the discovery cost is one error message.
+
+## D16. The events endpoint cannot write inference records
+
+`event_type: inference` is rejected with 400 and an explanation.
+
+Inference records describe what a model did, and the only honest source for that
+is traffic the proxy observed. If a caller could post one, anyone holding the
+events token could fabricate a model interaction that verifies perfectly. The
+API therefore accepts statements about what a human did and refuses statements
+about what a model did.
+
+## D17. A human_intervention must name an actor and a decision
+
+Both are required, and the decision has to be one of approve, override, reject,
+escalate, halt or annotate.
+
+Free text is where oversight evidence goes to die. "Looked at it, seemed fine"
+in a note field cannot be counted, filtered or reported on. A closed set of
+outcomes means `coverage` can tell you how many model outputs a human actually
+overrode, which is the question Article 14 conversations turn on.
+
+The cost is that the vocabulary will be wrong for somebody. Adding a value is a
+one-line change and, per the schema policy, not a breaking one.
+
+## D18. Export is an allowlist, enforced twice
+
+`flugschreiber export` collects only known filename shapes, then refuses with an
+error if anything in the resulting list is a secret.
+
+The signing key and the client salt are the two files that would let a recipient
+forge evidence or reverse a caller identity. A denylist that silently skips them
+turns a future bug (a renamed file, a new secret) into a leaked key. Collecting
+by allowlist and then asserting the negative means a mistake produces a loud
+failure rather than a quiet disclosure.
+
+The test that proves this writes real sentinel values into both secret files and
+greps the decompressed bundle for them.
+
+## D19. Coverage reports quiet stretches, and says what they do not mean
+
+`coverage` flags any period longer than the threshold in which nothing was
+recorded.
+
+This is the only signal a log can give about its own completeness. A gap means
+either nothing was happening or the proxy was not recording, and the tool cannot
+tell which. So it reports the gap and says exactly that, rather than either
+hiding it or implying downtime.
+
+What the command must never do is imply that captured traffic is all traffic.
+Coverage of a system is a network property. The output says so on every run.
+
+## D20. `inspect` explains an empty transcript rather than showing one
+
+In the default hash mode there is no prompt or completion text to display.
+
+A reconstruction that renders as an empty conversation reads as "nothing
+happened". The renderer instead states that the content mode was hash, that a
+digest of each request and response is recorded, and that the digests still
+prove which interaction each record describes.
+
+## D21. Checkpoint signing is on by default
+
+`serve` generates an Ed25519 key on first start, alongside the client salt and
+at the same mode 0600, and signs the chain head on every segment rotation, every
+five minutes, and at clean shutdown. `--no-sign` turns it off.
+
+The hash chain alone proves that nobody edited the log without rewriting all of
+it. Checkpoints raise that to: nobody rewrote it without also holding the signing
+key. That is a materially stronger claim and it costs one signature every few
+minutes, so making an operator opt in would mean most deployments run with the
+weaker property by accident. Defaults are policy.
+
+Verification does two things with a checkpoint, and the second is the one that
+matters: it checks the signature, and it checks the checkpoint against the actual
+chain. A checkpoint that is validly signed but whose recorded head hash does not
+match the record at that sequence is reported as high severity, because that
+combination is the fingerprint of a rewrite.
+
+The cost is a private key on the same host as the evidence, which bounds how
+much the mechanism can prove. `SECURITY.md` says so, and says what to do about
+it. An operator who wants the weaker property states that with `--no-sign`.
+
+## D22. S3 is an archival target, not the write path
+
+Sealed segments are uploaded to object storage when they rotate. The local
+segment is always primary and is always written first.
+
+S3 cannot append. Pretending otherwise means either buffering records until a
+segment closes, which loses evidence on a crash, or one object per record, which
+is slow and expensive and still not atomic with the chain. Uploading sealed
+segments matches how object lock and WORM buckets actually work: the object
+becomes immutable precisely because nothing will append to it again.
+
+Uploads never block the writer goroutine and an upload failure never fails an
+append. A proxy that stops recording because an object store is unreachable has
+turned a storage outage into an evidence gap.
+
+## D23. The evidence store defines the archiver interface, not the archive package
+
+`internal/evidence` declares the interface it needs and `internal/archive`
+happens to satisfy it. The evidence core does not import the S3 client.
+
+Otherwise the package that must keep working when everything else is broken
+would depend on an HTTP client, a signing implementation and a retry policy.
+Verification would inherit that dependency too, and `flugschreiber verify` is
+the one command that has to work on an auditor's laptop years from now.
+
+## D24. Verification runs at startup and never blocks it
+
+`serve` verifies the existing evidence directory before it begins recording, logs
+the result, and starts either way.
+
+An operator otherwise discovers a damaged log at the worst possible moment. The
+check costs one pass over files that are about to be appended to anyway.
+
+It does not block startup, and that is deliberate: a proxy that refuses to record
+because yesterday's records are damaged turns one problem into two. It logs every
+problem at error level with its severity and carries on.
+
+## D25. Metrics collect always, and are exposed at scrape time
+
+Samples are recorded whether or not `/metrics` is served, and gauges that
+describe the evidence directory are refreshed by a collector that runs
+immediately before each scrape.
+
+A background ticker reports whatever the last tick saw, which for a gauge read
+by a scraper is the wrong answer by up to one tick interval. Running the
+collector at scrape time is the Prometheus-native shape.
+
+No label may carry a caller-controlled value. Model names come from a bounded
+set that stops growing after 64 distinct values; prompts, session identifiers
+and client hashes never appear at all. That is enforced by the typed API rather
+than by a comment, and there is a test that posts a secret and greps the whole
+scrape for it.
+
+## D26. An interrupted prune and a replaced log are told apart by a deferred check
+
+When a log still contains records that `pruned.json` says were deleted, there
+are two explanations: a prune interrupted between two unlinks, or the log being
+replaced wholesale with the anchor left behind. The first is an operational
+hiccup; the second is the shape of an end-to-end rewrite.
+
+They are identical at the first surviving record. They differ at exactly one
+later point: the record whose sequence the anchor attests to must hash to the
+value the anchor recorded. So the benign diagnosis is entered provisionally and
+upgraded to a high-severity `anchor_mismatch` if that record disagrees, or if it
+never arrives because the log is shorter than the anchor claims.
+
+The first version of this check only recognised the case where nothing had been
+unlinked yet, so a crash between the second and third unlink produced an
+unreadable cascade of broken links, and a wholesale replacement was reported as
+a medium-severity "re-run retention". Both are now covered by tests that
+reproduce the exact on-disk shapes.
+
+## D27. The archive key prefix is applied in exactly one place
+
+Both `evidence.Options.ArchivePrefix` and `archive.Config.Prefix` can prepend a
+prefix. The CLI sets only the first.
+
+If both were set they would concatenate into a path nobody chose, and the
+failure is silent: the evidence lands somewhere, just not where the operator
+expects, and they find out when they go looking for it. One owner means the
+question never arises.
+
+## D28. A wedged archive backend cannot hold shutdown open
+
+`Close` waits up to `ArchiveShutdownTimeout` for uploads to drain, then cancels
+them, then waits a two-second grace period, then gives up.
+
+The first timeout assumes the backend honours context cancellation. `Archiver`
+is an interface, so that assumption belongs to whoever implements it, and a
+blocking client library would otherwise hand a third-party backend a veto over
+process shutdown. The evidence directory holds the complete log either way, so
+abandoning an upload costs a copy and nothing else.
+
+## D29. `/metrics` is refused rather than proxied when metrics are off
+
+With metrics disabled the route is still claimed and returns 404.
+
+Without that, the path falls through to the catch-all proxy handler and is
+forwarded upstream, so a Prometheus scrape of Flugschreiber would return the
+model server's own metrics under Flugschreiber's name. Serving someone else's
+numbers under your own is worse than serving none.
+
+## D30. The image needs a writable /tmp only for report and export
+
+`serve` writes nothing outside the evidence volume, so it runs on a read-only
+root filesystem unchanged. `report` and `export` write files where they are
+told, and on a read-only root that has to be a mounted path.
+
+The documented run command therefore carries `--tmpfs /tmp`, and CI runs the
+commands inside a read-only container so that this cannot regress into a README
+that only works on a writable filesystem.

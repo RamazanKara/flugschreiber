@@ -1,0 +1,46 @@
+{{- if eq .Values.mode "central" }}
+{{- if .Values.metrics.podMonitor.enabled }}
+{{- $pm := .Values.metrics.podMonitor }}
+{{- if not (or ($.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") $pm.skipCRDCheck) }}
+{{- fail "metrics.podMonitor.enabled is true but monitoring.coreos.com/v1 is not present in this cluster, so nothing would scrape the proxy and nothing would say why. Install the Prometheus Operator, or set metrics.podMonitor.skipCRDCheck=true when rendering offline with `helm template`." }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}
+  {{- with $pm.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+    {{- with $pm.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with (merge (dict) $pm.annotations .Values.commonAnnotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "flugschreiber.proxySelectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: http
+      path: {{ .Values.metrics.path }}
+      scheme: {{ ternary "https" "http" .Values.tls.enabled }}
+      interval: {{ $pm.interval }}
+      scrapeTimeout: {{ $pm.scrapeTimeout }}
+      honorLabels: {{ $pm.honorLabels }}
+      {{- with $pm.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $pm.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

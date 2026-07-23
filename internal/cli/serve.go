@@ -16,6 +16,7 @@ import (
 
 	"github.com/flugschreiber/flugschreiber/internal/config"
 	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/flugschreiber/flugschreiber/internal/metrics"
 	"github.com/flugschreiber/flugschreiber/internal/mockupstream"
 	"github.com/flugschreiber/flugschreiber/internal/proxy"
 	"github.com/flugschreiber/flugschreiber/internal/version"
@@ -54,6 +55,13 @@ Every flag can also be set as an environment variable, for example
 		system     = fs.String("system-name", "", "system name, used to pre-fill generated documentation")
 		purpose    = fs.String("purpose", "", "intended purpose, used to pre-fill generated documentation")
 		contact    = fs.String("contact", "", "accountable contact, used to pre-fill generated documentation")
+
+		eventsToken = fs.String("events-token", "",
+			"bearer token for the oversight events endpoint; while this is empty the endpoint stays disabled")
+		noSign = fs.Bool("no-sign", false,
+			"do not sign checkpoints; the chain then proves internal consistency only")
+		checkpointEvery = fs.Duration("checkpoint-interval", 0,
+			"how often to sign the chain head while writing (default 5m)")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -80,6 +88,13 @@ Every flag can also be set as an environment variable, for example
 	setString(&cfg.Deployment.SystemName, *system)
 	setString(&cfg.Deployment.Purpose, *purpose)
 	setString(&cfg.Deployment.Contact, *contact)
+	setString(&cfg.EventsToken, *eventsToken)
+	if *noSign {
+		cfg.SigningDisabled = true
+	}
+	if *checkpointEvery != 0 {
+		cfg.CheckpointInterval = config.Duration(*checkpointEvery)
+	}
 	if *mock {
 		cfg.MockUpstream = true
 	}
@@ -93,8 +108,8 @@ Every flag can also be set as an environment variable, for example
 	log := newLogger(cfg.LogLevel)
 
 	// The mock runs in-process on a loopback port. This is what lets the
-	// quickstart and CI exercise the whole path — proxy, capture, chain,
-	// verify, report — with no model server and no network.
+	// quickstart and CI exercise the whole path (proxy, capture, chain, verify,
+	// report) with no model server and no network.
 	var mockServer *http.Server
 	if cfg.MockUpstream {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -117,19 +132,73 @@ Every flag can also be set as an environment variable, for example
 		return err
 	}
 
+	// The signing key is generated on first start alongside the client salt,
+	// both at mode 0600. Checkpoints are what raise the chain from "nobody
+	// edited this without rewriting all of it" to "nobody rewrote this without
+	// also holding the signing key", so they are on unless switched off.
+	var keys *evidence.KeyPair
+	if !cfg.SigningDisabled {
+		kp, err := evidence.LoadOrCreateKeyPair(cfg.DataDir)
+		if err != nil {
+			return err
+		}
+		keys = kp
+	}
+
+	archiver, err := buildArchiver(cfg, log)
+	if err != nil {
+		return err
+	}
+
 	store, err := evidence.Open(evidence.Options{
-		Dir:             cfg.DataDir,
-		SegmentMaxBytes: cfg.SegmentMaxBytes,
+		Dir:                cfg.DataDir,
+		SegmentMaxBytes:    cfg.SegmentMaxBytes,
+		Keys:               keys,
+		CheckpointInterval: cfg.CheckpointInterval.Std(),
+		Archiver:           archiver,
+		ArchivePrefix:      cfg.Archive.Prefix,
 	})
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 
+	// Verifying at startup answers the question an operator would otherwise
+	// only ask after an incident, and it costs a single pass over files that
+	// are about to be appended to anyway. It never blocks startup: a proxy that
+	// refuses to record because yesterday's log is damaged would turn one
+	// problem into two.
+	var recordsAtStart uint64
+	if verified, verr := evidence.Verify(cfg.DataDir); verr == nil && verified.Records > 0 {
+		recordsAtStart = verified.Records
+		attrs := []any{
+			slog.Uint64("records", verified.Records),
+			slog.String("head_hash", verified.HeadHash),
+			slog.Bool("pruned", verified.Pruned),
+			slog.Int("checkpoints", verified.Checkpoints),
+		}
+		if verified.OK() {
+			log.Info("existing evidence verified", attrs...)
+		} else {
+			log.Error("existing evidence FAILED verification, recording continues",
+				append(attrs, slog.Int("problems", len(verified.Problems)))...)
+			for _, p := range verified.Problems {
+				log.Error("evidence problem",
+					slog.String("segment", p.Segment),
+					slog.Int("line", p.Line),
+					slog.String("kind", p.Kind),
+					slog.String("severity", p.Severity),
+					slog.String("detail", p.Detail))
+			}
+		}
+	}
+
 	srv, err := proxy.New(cfg, store, log)
 	if err != nil {
 		return err
 	}
+
+	srv.SetMetricsCollector(evidenceCollector(srv.Metrics(), store, cfg.DataDir, recordsAtStart))
 
 	httpSrv := &http.Server{
 		Addr:    cfg.Listen,
@@ -200,4 +269,55 @@ func newLogger(level string) *slog.Logger {
 		l = slog.LevelInfo
 	}
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: l}))
+}
+
+// evidenceCollector reports the state of the evidence directory as it is on
+// disk. The proxy knows what it wrote this run; only the filesystem knows what
+// every run before it left behind.
+func evidenceCollector(m *metrics.Metrics, store *evidence.Store, dir string, baseRecords uint64) func() {
+	var lastCheckpoints, lastUploaded, lastSkipped, lastFailed uint64
+	return func() {
+		segs, err := evidence.Segments(dir)
+		if err == nil {
+			var bytes int64
+			for _, s := range segs {
+				if info, statErr := os.Stat(s.Path); statErr == nil {
+					bytes += info.Size()
+				}
+			}
+			m.SetEvidenceBytes(bytes)
+		}
+		m.SetEvidenceRecords(baseRecords + store.Appended())
+
+		// Checkpoints and archive uploads are counters, and the store reports
+		// running totals, so only the increment since the last scrape is added.
+		if written := store.Checkpoints(); written > lastCheckpoints {
+			for i := lastCheckpoints; i < written; i++ {
+				m.CheckpointWritten()
+			}
+			lastCheckpoints = written
+		}
+
+		stats := store.ArchiveStats()
+		if stats.Backend == "" {
+			return
+		}
+		advance(&lastUploaded, stats.Uploaded, func() {
+			m.ArchiveUpload(stats.Backend, metrics.ArchiveSuccess)
+		})
+		advance(&lastSkipped, stats.Skipped, func() {
+			m.ArchiveUpload(stats.Backend, metrics.ArchiveSkipped)
+		})
+		advance(&lastFailed, stats.Failed, func() {
+			m.ArchiveUpload(stats.Backend, metrics.ArchiveFailure)
+		})
+	}
+}
+
+// advance carries a running total forward onto a counter, calling inc once for
+// each unit of progress since the last scrape.
+func advance(seen *uint64, total uint64, inc func()) {
+	for ; *seen < total; *seen++ {
+		inc()
+	}
 }

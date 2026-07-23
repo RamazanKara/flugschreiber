@@ -22,7 +22,9 @@ import (
 	"github.com/flugschreiber/flugschreiber/internal/config"
 	"github.com/flugschreiber/flugschreiber/internal/content"
 	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/flugschreiber/flugschreiber/internal/metrics"
 	"github.com/flugschreiber/flugschreiber/internal/openai"
+	"github.com/flugschreiber/flugschreiber/internal/version"
 )
 
 // prefixBytes is how much of each body is retained for parsing. Metadata such
@@ -43,6 +45,12 @@ type Server struct {
 	upstream *url.URL
 	rp       *httputil.ReverseProxy
 	log      *slog.Logger
+	metrics  *metrics.Metrics
+
+	// collect refreshes gauges the proxy cannot observe from a request, such as
+	// the size of the evidence directory. It runs at scrape time so a gauge is
+	// never staler than the scrape that reads it.
+	collect func()
 
 	captureErrors atomic.Uint64
 }
@@ -87,6 +95,11 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 		capturer: &content.Capturer{Mode: cfg.ContentMode, Redactor: redactor},
 		salt:     salt,
 		log:      log,
+		metrics: metrics.New(metrics.BuildInfo{
+			Version:     version.Version,
+			Commit:      version.Commit,
+			ContentMode: cfg.ContentMode,
+		}),
 	}
 
 	s.upstream, err = url.Parse(cfg.Upstream)
@@ -121,10 +134,38 @@ func newTransport(cfg config.Config) http.RoundTripper {
 }
 
 // Handler returns the full HTTP surface: health, and everything else proxied.
+// Metrics exposes the metric set so the process can update gauges the proxy
+// itself cannot observe, such as the size of the evidence directory.
+func (s *Server) Metrics() *metrics.Metrics { return s.metrics }
+
+// SetMetricsCollector registers a function to run immediately before each
+// metrics scrape. Prometheus semantics expect a gauge to be current when it is
+// read, and the alternative, a background ticker, reports whatever the last
+// tick saw.
+func (s *Server) SetMetricsCollector(fn func()) { s.collect = fn }
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if s.cfg.MetricsEnabled {
+		inner := s.metrics.Handler()
+		mux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if s.collect != nil {
+				s.collect()
+			}
+			inner.ServeHTTP(w, r)
+		}))
+	} else {
+		// Without this the path falls through to the proxy and is forwarded
+		// upstream, so a Prometheus scrape of Flugschreiber would silently
+		// return the model server's own metrics. Claiming this route and
+		// refusing it is the only honest answer.
+		mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "metrics are disabled on this instance", http.StatusNotFound)
+		})
+	}
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleHealth)
+	mux.HandleFunc("POST "+EventsPath, s.handleEvents)
 	mux.Handle("/", http.HandlerFunc(s.handleProxy))
 	return mux
 }
@@ -295,12 +336,27 @@ func (s *Server) finish(c *capture, resp *http.Response, streamErr error) {
 		Output: output,
 	}
 
+	s.metrics.ObserveRequest(metrics.RequestObservation{
+		Endpoint: metrics.EndpointFor(c.kind),
+		Method:   c.method,
+		Status:   c.status,
+		Stream:   streamed,
+		Duration: time.Since(c.start),
+		TTFB:     c.ttfb,
+	})
+	if ev.Usage != nil {
+		s.metrics.AddTokens(ev.ModelServed, ev.Usage.PromptTokens, ev.Usage.CompletionTokens)
+	}
+
 	if err := s.store.Append(ev); err != nil {
 		s.captureErrors.Add(1)
+		s.metrics.CaptureError(metrics.CaptureErrorAppendFailed)
 		s.log.Error("failed to append evidence record",
 			slog.String("request_id", c.requestID),
 			slog.String("error", err.Error()))
+		return
 	}
+	s.metrics.EventAppended()
 }
 
 // upstreamLabel records where traffic went without leaking any credential that

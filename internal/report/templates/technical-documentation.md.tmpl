@@ -45,7 +45,7 @@ callers and reported as served by the upstream:
 | Model requested | Model served | Requests | Streamed | Errors | Prompt tokens | Completion tokens |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 {{ range $s.Models -}}
-| `{{ orDash .Requested }}` | `{{ orDash .Served }}` | {{ .Requests }} | {{ .Streamed }} | {{ .Errors }} | {{ .PromptTokens }} | {{ .CompletionTokens }} |
+| `{{ orNA .Requested }}` | `{{ orNA .Served }}` | {{ .Requests }} | {{ .Streamed }} | {{ .Errors }} | {{ .PromptTokens }} | {{ .CompletionTokens }} |
 {{ end }}
 {{ if $s.Substituted -}}
 In at least one case the served identifier differs from the requested one: the upstream
@@ -210,7 +210,7 @@ that point and at every point after it.
 | --- | --- |
 | Verification result | {{ if $s.ChainVerified }}**intact**, every record hash and link verified{{ else }}**FAILED**{{ end }} |
 | Segments | {{ len $s.Segments }} ({{ join ", " $s.Segments }}) |
-| Chain head hash | `{{ orDash $s.HeadHash }}` |
+| Chain head hash | `{{ orNA $s.HeadHash }}` |
 | Verified at | {{ stamp .Now }} |
 
 {{ if not $s.ChainVerified }}

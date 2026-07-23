@@ -1,0 +1,21 @@
+# Applications set OPENAI_BASE_URL to
+#   http://flugschreiber.<namespace>.svc.cluster.local:8080/v1
+# and change nothing else.
+apiVersion: v1
+kind: Service
+metadata:
+  name: flugschreiber
+  labels:
+    app.kubernetes.io/name: flugschreiber
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  # The component label matters: the verify CronJob's pods carry the same name
+  # label, and without it this Service would also select them.
+  selector:
+    app.kubernetes.io/name: flugschreiber
+    app.kubernetes.io/component: proxy

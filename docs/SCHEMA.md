@@ -4,14 +4,22 @@ Schema version: **1**
 
 ## File layout
 
-An evidence directory contains numbered segments and a salt file:
-
 ```
 /var/lib/flugschreiber/
-  seg-00000001.jsonl
+  seg-00000001.jsonl    # chained records, append-only
   seg-00000002.jsonl
-  client-salt          # 32 random bytes, mode 0600, never exported
+  checkpoints.jsonl     # signed attestations of the chain head over time
+  public-key.pem        # Ed25519 public key, PKIX, always exported
+  signing-key.pem       # Ed25519 private key, PKCS#8, mode 0600, NEVER exported
+  client-salt           # 32 random bytes, mode 0600, NEVER exported
+  pruned.json           # present only once retention has deleted segments
+  LEGAL_HOLD            # present only while a hold is in force
 ```
+
+Three of those files never leave the host. `signing-key.pem` and `client-salt`
+are excluded from every export, and `flugschreiber export` will refuse to
+include them. A recipient of an evidence bundle can verify everything and
+reverse nothing.
 
 Each segment is newline-delimited JSON, one record per line, appended only.
 Segments roll at 64 MiB by default. The chain continues across segments: the
@@ -121,6 +129,101 @@ to be the transcript of the interaction this log attests to.
 For streamed responses, `output.sha256` covers the raw SSE bytes as received;
 `output.text` (in `store` and `redact`) is the reassembled message the client
 saw, not the frames.
+
+## Signed checkpoints
+
+The hash chain proves a log is internally consistent. It does not prove who
+wrote it: anyone who can rewrite the whole directory can recompute a chain that
+verifies. Checkpoints close that gap by periodically signing the chain head with
+a key that lives outside the log.
+
+`checkpoints.jsonl`, one object per line, append-only:
+
+```json
+{
+  "version": 1,
+  "segment": "seg-00000002.jsonl",
+  "seq": 4210,
+  "record_hash": "a17b...",
+  "records": 4210,
+  "timestamp": "2026-05-04T08:31:00.123456789Z",
+  "key_id": "3f9a1c04b7e25d18",
+  "signature": "9c2e..."
+}
+```
+
+The signature is Ed25519 over this preimage, newline-delimited and
+domain-separated so it can never be confused with a record hash:
+
+```
+flugschreiber-checkpoint-v1
+version:<decimal>
+segment:<name>
+seq:<decimal>
+record_hash:<hex>
+records:<decimal>
+timestamp:<rfc3339nano>
+key_id:<hex>
+```
+
+Checkpoints are written on every segment rotation, on a timer, and on clean
+shutdown. `key_id` is the first 16 hex characters of the SHA-256 of the PKIX DER
+public key.
+
+Verification does two things, and the second one is the point:
+
+1. Check the signature against `public-key.pem`.
+2. Check the checkpoint against the actual chain. The record at `seq` must carry
+   `record_hash`. A checkpoint whose signature is valid but whose hash does not
+   match the chain means the log was rewritten after that checkpoint was signed.
+
+An attacker who rewrites the directory but does not hold the signing key cannot
+produce checkpoints that satisfy step 2. That is the whole value of the
+mechanism, and it is why the private key should not live on the same host as the
+evidence for anything you care about.
+
+The key is only as good as its custody. Everything in `SECURITY.md` about that
+still applies.
+
+## Pruning anchor
+
+Retention deletes whole segments from the front of the log, which breaks the
+walk from the genesis hash. Deletion therefore leaves an anchor recording where
+the surviving chain legitimately begins.
+
+`pruned.json`:
+
+```json
+{
+  "version": 1,
+  "pruned_at": "2026-11-02T03:00:00.000000000Z",
+  "last_pruned_seq": 1203,
+  "last_pruned_hash": "77c1...",
+  "segments": ["seg-00000001.jsonl", "seg-00000002.jsonl"],
+  "records": 1203,
+  "reason": "retention policy: 180 days",
+  "key_id": "3f9a1c04b7e25d18",
+  "signature": "4b81..."
+}
+```
+
+When it exists, verification expects the first surviving record to carry
+`prev_hash == last_pruned_hash` and `seq == last_pruned_seq + 1`, rather than the
+genesis hash and sequence 1.
+
+A pruned log is reported as pruned, never as intact from the beginning. The
+distinction matters: "this log is complete and unaltered" and "this log is
+unaltered since we deleted the first 1203 records under a stated retention
+policy" are different claims, and only one of them is true after a prune.
+
+## Legal hold
+
+A file named `LEGAL_HOLD` in the evidence directory. Its contents are a
+human-written reason. While it exists, retention enforcement deletes nothing and
+says so.
+
+It is checked at enforcement time rather than cached, so dropping the file in
+place stops the next scheduled deletion without restarting anything.
 
 ## Compatibility policy
 

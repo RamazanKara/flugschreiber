@@ -1,0 +1,149 @@
+{{- $fullname := include "flugschreiber.fullname" . -}}
+{{- $port := include "flugschreiber.port" . -}}
+{{- $scheme := ternary "https" "http" .Values.tls.enabled -}}
+{{- if eq .Values.mode "sidecar" }}
+Flugschreiber is installed in sidecar mode, so this release deliberately
+contains no Kubernetes objects. It exists to make the named templates in
+templates/_sidecar.tpl available to the chart that depends on it.
+
+Put the recorder into your application pod:
+
+    {{ "{{-" }} $fs := .Subcharts.flugschreiber {{ "}}" }}
+    containers:
+      - name: app
+        env:
+          {{ "{{-" }} include "flugschreiber.sidecar.appEnv" $fs | nindent 10 {{ "}}" }}
+      {{ "{{-" }} include "flugschreiber.sidecar.container" $fs | nindent 6 {{ "}}" }}
+
+The full explanation is at the top of templates/_sidecar.tpl.
+
+One thing to be clear about before you build on this: in the sidecar topology a
+NetworkPolicy cannot prove the proxy was not bypassed. Policy selects pods, the
+recorder shares the application's pod and IP, and no rule can allow one
+container while denying the one beside it. What you get is a record of what the
+application chose to send through the recorder.
+{{- else }}
+Flugschreiber {{ .Chart.AppVersion }} is recording to {{ .Values.config.dataDir }}, one pod, one hash chain.
+
+  1. Point an application at it. Two environment variables, no code change:
+
+       OPENAI_BASE_URL={{ $scheme }}://{{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/v1
+       OPENAI_API_KEY=<whatever your upstream expects>
+
+  2. Check what it recorded. `verify` reads files and nothing else:
+
+       kubectl exec -n {{ .Release.Namespace }} deploy/{{ $fullname }} -- \
+         flugschreiber verify --dir {{ .Values.config.dataDir }}
+
+  3. Generate the documentation inputs, an Annex IV shaped skeleton and the
+     Article 50 transparency pack in German and English:
+
+       kubectl exec -n {{ .Release.Namespace }} deploy/{{ $fullname }} -- \
+         flugschreiber report --dir {{ .Values.config.dataDir }} --out {{ .Values.config.dataDir }}/reports \
+         --organisation {{ .Values.config.deployment.organisation | default "Muster GmbH" | quote }} \
+         --system-name {{ .Values.config.deployment.systemName | default "Support Assistant" | quote }}
+
+  4. Hand an auditor a copy of the directory and the binary. They can run the
+     same verification on their own machine, with no access to your cluster:
+
+       kubectl cp {{ .Release.Namespace }}/$(kubectl get pod -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=proxy -o name | head -1 | cut -d/ -f2):{{ .Values.config.dataDir }} ./evidence-copy
+       flugschreiber verify --dir ./evidence-copy
+
+     client-salt stays in the pod. Without it a recipient can tell two callers
+     apart but cannot map an identifier back to a credential.
+
+{{- if not .Values.modelServer.networkPolicy.enabled }}
+
+  READ THIS ONE. modelServer.networkPolicy.enabled is false, so nothing stops
+  an application reaching the model server directly. Anything with the old base
+  URL in a ConfigMap goes around this proxy, is not recorded, and nothing
+  anywhere reports that it happened. Until that policy is on, "everything that
+  reached the model is in this log" is an assumption about how carefully people
+  configured their applications, not a property of the cluster.
+
+      modelServer:
+        networkPolicy:
+          enabled: true
+          podSelector:
+            matchLabels: {app: vllm}
+          ports:
+            - {protocol: TCP, port: 8000}
+
+  Then confirm your CNI enforces NetworkPolicy. Several do not by default, and
+  an unenforced policy is worse than none, because you will believe it.
+{{- else }}
+
+  The model server policy is on: only this proxy may reach pods matching
+  {{ .Values.modelServer.networkPolicy.podSelector | toJson }} in namespace {{ .Values.modelServer.networkPolicy.namespace | default .Release.Namespace }}.
+  Confirm your CNI enforces NetworkPolicy before relying on it, and test the
+  bypass yourself from an unrelated pod.
+{{- end }}
+
+{{- if not .Values.persistence.enabled }}
+
+  WARNING. persistence.enabled is false, so the evidence directory is an
+  emptyDir. Every record is deleted when the pod restarts, and there is nothing
+  to retain, verify or hand to anyone. Use this for a smoke test only.
+{{- end }}
+
+{{- if eq .Values.config.contentMode "store" }}
+
+  Content mode is store, so prompts and completions are written verbatim. The
+  evidence volume is now a system holding personal data, with the record of
+  processing activities, retention policy, access controls and subject access
+  answers that follow. Retention is set to {{ .Values.config.retentionDays }} days.
+{{- else if eq .Values.config.contentMode "redact" }}
+
+  Content mode is redact. Pattern based redaction is best effort by
+  construction, and the generated documentation says so. Free text carries
+  personal data in shapes no regular expression will match.
+{{- end }}
+
+{{- if .Values.config.signingDisabled }}
+
+  Checkpoint signing is off, so no Ed25519 key is generated and no checkpoint
+  is written. The chain still detects any edit that is not a rewrite of
+  everything after it, and a rewrite of everything after it is exactly what
+  anyone who can write to the evidence volume can do. Recording the head hash
+  somewhere outside the cluster is the cheapest thing left that helps.
+{{- end }}
+
+{{- if or .Values.secret.eventsToken .Values.secret.existingSecret }}
+
+  An events token can reach the pod from Secret {{ include "flugschreiber.secretName" . }}, so
+  POST {{ $scheme }}://{{ $fullname }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}/flugschreiber/v1/events
+  may append human oversight records to the chain. Whoever holds that token can
+  state that a person approved, overrode, rejected, escalated, halted or
+  annotated a model output, and the chain will make that statement look
+  authoritative. Give it to the systems your reviewers actually use and to
+  nothing else.
+  {{- if .Values.secret.existingSecret }}
+  The key {{ .Values.secret.keys.eventsToken }} is read optionally, so the endpoint is live only if that
+  key is really in the Secret. It returns 404 when it is not.
+  {{- end }}
+{{- end }}
+
+{{- if .Values.verify.enabled }}
+
+  The chain is re-verified on schedule {{ .Values.verify.schedule | quote }} by CronJob
+  {{ $fullname }}-verify, against a read-only mount, one attempt, no retry.
+  A failed Job is the alert. Make sure something watches for failed Jobs:
+
+       kubectl get jobs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=verify
+{{- else }}
+
+  No scheduled verification. Nothing will notice a broken chain until someone
+  looks. Set verify.enabled=true.
+{{- end }}
+
+{{- if .Values.persistence.enabled }}
+
+  The claim is where this arrangement is weakest: anyone who can write to
+  {{ include "flugschreiber.claimName" . }} can recompute the chain from
+  scratch and produce a log that verifies. Keep the set of humans who can write
+  to it smaller than the set who can deploy the application.
+{{- end }}
+
+  Flugschreiber produces evidence and documentation inputs. It does not make
+  anyone compliant with anything.
+{{- end }}

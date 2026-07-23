@@ -1,0 +1,583 @@
+# Flugschreiber chart values.
+#
+# Two things on this page decide whether the log you end up with is evidence or
+# just a log. Read them before anything else.
+#
+#   1. replicas. It is 1 and the chart refuses to render anything else. Each
+#      pod owns one hash chain and one evidence directory. Two pods appending
+#      to the same volume interleave records, and the chain breaks on the first
+#      concurrent write. See the `replicas` comment below.
+#
+#   2. modelServer.networkPolicy. Off by default because the chart cannot guess
+#      how your model server is labelled. Until it is on, any application that
+#      still has the old base URL in a ConfigMap goes straight to the model
+#      server, is not recorded, and nothing anywhere reports that it happened.
+#      Coverage is a network property, not a proxy feature.
+
+# -- Topology. Either "central" or "sidecar".
+#
+# central renders the Deployment, Service, claim, policies and the verify
+# CronJob described below. It is the arrangement that most teams should start
+# with, and the only one where a NetworkPolicy can make the proxy unavoidable.
+#
+# sidecar renders no resources at all. Set it when this chart is a dependency
+# of your application's chart and you only want its named templates, which put
+# a Flugschreiber container into your own pod. See templates/_sidecar.tpl and
+# deploy/examples/sidecar.
+mode: central
+
+# -- Override the chart name used in resource names.
+nameOverride: ""
+# -- Override the full generated resource name (release-name + chart-name).
+fullnameOverride: ""
+
+# -- Labels added to every object this chart creates.
+commonLabels: {}
+# -- Annotations added to every object this chart creates.
+commonAnnotations: {}
+
+image:
+  # -- Container image repository.
+  repository: ghcr.io/flugschreiber/flugschreiber
+  # -- Image tag. Empty means the chart's appVersion, so an upgrade of the
+  # chart is what moves the image, rather than a mutable tag moving under you.
+  tag: ""
+  # -- Pin by digest instead of tag, e.g. sha256:abcd... . Wins over tag.
+  digest: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+  # -- Image pull secrets, e.g. [{name: ghcr-credentials}].
+  pullSecrets: []
+
+# -- Number of proxy pods. This must be 1 and the chart fails the render if it
+# is not.
+#
+# Every record carries the hash of the record before it, which requires a
+# single total order over one directory. A Deployment mounts one
+# PersistentVolumeClaim into every replica, so a second pod would append to the
+# same files with its own idea of the sequence number and its own head hash.
+# The result is not a slow log or a lossy log, it is a chain that fails to
+# verify from the first concurrent append onwards, and it fails in a way that
+# looks exactly like tampering.
+#
+# If one pod is not enough throughput, install this chart several times with a
+# separate claim each, point different applications at different releases, and
+# verify each chain on its own. `flugschreiber verify` takes a directory, so
+# several chains cost operational effort rather than correctness. Multi-writer
+# support is not planned.
+replicas: 1
+
+config:
+  # -- Address the proxy listens on. Also set the container port and the
+  # probes, so change both parts of the port if you change it.
+  listen: ":8080"
+
+  # -- Upstream OpenAI-compatible base URL, e.g. http://vllm:8000. Required
+  # unless mockUpstream is true.
+  upstream: ""
+
+  # -- Run the built-in deterministic mock model server instead of a real
+  # upstream. For a smoke test of the chart on a cluster with no GPU. Its
+  # output says so in every response, so it can never be mistaken for a model.
+  mockUpstream: false
+
+  # -- Evidence directory. The only writable path in the container.
+  dataDir: /var/lib/flugschreiber
+
+  # -- store, hash or redact.
+  #
+  # hash keeps a SHA-256 of the exact request and response bytes and no prompt
+  # or completion text at rest. store keeps the text verbatim, which turns the
+  # evidence volume into a system holding personal data, with the record of
+  # processing activities, retention policy and subject access answers that
+  # follow. redact is best effort by construction. Decide before you switch,
+  # not after.
+  contentMode: hash
+
+  # -- Redaction patterns used when contentMode is redact. Built-in names are
+  # email, iban, credit_card, ipv4 and phone; label=regexp also works.
+  redactPatterns: []
+
+  # -- Minimum retention in days. Hard floor of 180.
+  #
+  # Article 19 expects at least six months of automatically generated logs
+  # where they are under the provider's control. The binary refuses to start
+  # below 180, and values.schema.json refuses to install below 180, so the
+  # answer arrives at `helm install` rather than in a CrashLoopBackOff.
+  retentionDays: 180
+
+  # -- Segment rotation size in bytes. 0 uses the binary's default.
+  segmentMaxBytes: 0
+
+  # -- How often the chain head is signed while the log is being written to,
+  # e.g. "5m". Empty uses the binary's default of five minutes.
+  #
+  # A checkpoint is a signature over the head at a moment in time, so the
+  # interval is the size of the window an attacker holding the volume but not
+  # the key can rewrite without breaking one. Shorter means a smaller window
+  # and more checkpoints to keep, and a checkpoint is one short line.
+  #
+  # Passed as --checkpoint-interval, so unlike requestTimeout it works without
+  # config.file.enabled. It does nothing when signingDisabled is true, and the
+  # chart refuses that combination rather than rendering a value with no
+  # effect.
+  checkpointInterval: ""
+
+  # -- Stop signing checkpoints. Leave this false unless you have decided to
+  # accept a weaker log, and know which one you are accepting.
+  #
+  # With signing on, altering the log means also holding the Ed25519 key the
+  # proxy generated at <dataDir>/signing-key.pem, because every checkpoint
+  # signature over a head hash would otherwise stop verifying. With signing
+  # off, the chain still detects any edit that is not a rewrite of everything
+  # after it, and a rewrite of everything after it is exactly what anyone with
+  # write access to the evidence volume can do. The difference is between "this
+  # log was not edited" and "this log was not edited by someone who does not
+  # hold the key".
+  #
+  # There is no operational reason to set this. It exists so that an operator
+  # who cannot keep a private key on the volume can say so deliberately rather
+  # than discovering later that the key was there all along.
+  signingDisabled: false
+
+  # -- debug, info, warn or error. Logs are JSON on stderr.
+  logLevel: info
+
+  # -- Upper bound on a single proxied request, e.g. "10m". Only read from the
+  # rendered config file, so it needs config.file.enabled.
+  requestTimeout: ""
+
+  # -- Grace period for draining the evidence queue on shutdown, e.g. "15s".
+  # Only read from the rendered config file, so it needs config.file.enabled.
+  # Keep it below terminationGracePeriodSeconds.
+  shutdownTimeout: ""
+
+  # Organisational context. None of this changes proxy behaviour; it pre-fills
+  # the documents `flugschreiber report` generates so they are not full of
+  # placeholders when someone asks for them.
+  deployment:
+    # -- Legal entity operating the system.
+    organisation: ""
+    # -- Name of the AI system this proxy sits in front of.
+    systemName: ""
+    # -- Intended purpose, one sentence.
+    purpose: ""
+    # -- Accountable contact, a role address rather than a person.
+    contact: ""
+    # -- provider or deployer.
+    role: deployer
+    # -- Free text, e.g. production or staging.
+    environment: production
+
+  file:
+    # -- Render the configuration as JSON into a ConfigMap and pass --config.
+    #
+    # The chart sets a FLUGSCHREIBER_* environment variable for every value it
+    # can, and the environment wins over the file, so enabling this changes
+    # nothing except for requestTimeout and shutdownTimeout, which have no
+    # environment variable. It is also useful when you want the effective
+    # configuration readable with `kubectl get configmap`. The upstream API key
+    # is never written here; secrets do not belong in a ConfigMap.
+    enabled: false
+    # -- Directory the ConfigMap is mounted at, read-only.
+    mountPath: /etc/flugschreiber
+
+# Credentials. Anything set under `secret` ends up in the release's stored
+# values, which live in a Secret in the cluster and in whatever CI system ran
+# the install. Prefer existingSecret and a real secret manager.
+secret:
+  # -- Create a Secret from the values below.
+  create: false
+  # -- Use a Secret you manage yourself instead. Wins over create. Keys are
+  # read with the names under `secret.keys` and are treated as optional, so a
+  # Secret holding only some of them is fine.
+  existingSecret: ""
+  # -- Bearer token injected upstream only when the caller sent no
+  # Authorization header of its own. Client credentials otherwise pass through
+  # untouched and are never written to the evidence log.
+  upstreamApiKey: ""
+  # -- Bearer token for POST /flugschreiber/v1/events, the endpoint that writes
+  # human oversight records into the evidence chain.
+  #
+  # The endpoint returns 404 while this is unset, which is the right default. A
+  # writer to the chain that anyone reachable can call would let anyone
+  # fabricate "reviewed and approved by Alice", and a forged record inside a
+  # tamper-evident log is worse than no record, because the chain makes it look
+  # authoritative. Setting this is the decision about who may state that a
+  # human looked at something.
+  #
+  # It is a credential, so it only ever reaches the container through the
+  # Secret path. The chart never writes it into the ConfigMap, whatever
+  # config.file.enabled is set to.
+  eventsToken: ""
+  s3:
+    # -- Expose S3 credentials to the container. The archive backend lands in
+    # M2; until then this only sets environment variables.
+    enabled: false
+    accessKeyId: ""
+    secretAccessKey: ""
+    sessionToken: ""
+  # -- Key names inside the Secret.
+  keys:
+    upstreamApiKey: upstream-api-key
+    eventsToken: events-token
+    s3AccessKeyId: s3-access-key-id
+    s3SecretAccessKey: s3-secret-access-key
+    s3SessionToken: s3-session-token
+  # -- Environment variable names the S3 keys are exposed under. Defaults are
+  # the conventional AWS names. Verify them against the release you run.
+  s3EnvNames:
+    accessKeyId: AWS_ACCESS_KEY_ID
+    secretAccessKey: AWS_SECRET_ACCESS_KEY
+    sessionToken: AWS_SESSION_TOKEN
+
+tls:
+  # -- Serve HTTPS instead of HTTP. Requires a Secret of type kubernetes.io/tls.
+  enabled: false
+  # -- Name of the existing kubernetes.io/tls Secret.
+  existingSecret: ""
+  # -- Where the Secret is mounted, read-only. Keep it outside
+  # config.file.mountPath: a volume mounted inside another read-only volume
+  # cannot have its mount point created, and the container fails to start.
+  mountPath: /etc/flugschreiber-tls
+
+# The evidence volume. This is the weak point of the whole arrangement: anyone
+# who can write to it can recompute the chain from scratch and produce a log
+# that verifies perfectly. Keep the set of humans who can write here smaller
+# than the set who can deploy the application.
+persistence:
+  # -- Create a PersistentVolumeClaim for the evidence directory. When false
+  # the evidence directory is an emptyDir, which is deleted with the pod. Only
+  # ever acceptable for a smoke test.
+  enabled: true
+  # -- Use a claim you created yourself instead of letting the chart create one.
+  existingClaim: ""
+  # -- StorageClass name. Empty uses the cluster default; "-" disables dynamic
+  # provisioning.
+  storageClass: ""
+  # -- Access modes. ReadWriteOnce is correct: one writer, by construction.
+  # ReadWriteMany does not make a second replica safe, it just makes the
+  # breakage easier to reach.
+  accessModes:
+    - ReadWriteOnce
+  # -- Claim size. In hash mode a record is around 600 bytes, so a million
+  # interactions fits in well under a gigabyte. In store mode it depends
+  # entirely on prompt sizes; measure for a day before committing.
+  size: 10Gi
+  # -- Extra annotations on the claim.
+  annotations: {}
+  # -- Extra labels on the claim.
+  labels: {}
+  # -- Add helm.sh/resource-policy: keep so that `helm uninstall` leaves the
+  # evidence behind. Deleting a release should not delete the log you are
+  # retaining for 180 days. Turning this off means uninstall destroys evidence.
+  keepOnUninstall: true
+
+# The proxy is I/O bound and holds almost nothing in memory, because bodies are
+# teed through rather than buffered.
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    # -- No CPU limit on purpose. Every model call in the cluster goes through
+    # this process, so CPU throttling here shows up as latency on all of them,
+    # and a proxy that copies bytes is not the workload a limit protects you
+    # from. Set one only if you have measured a reason to.
+    memory: 256Mi
+
+# Applies to the whole pod. The container image is distroless static with no
+# shell and no package manager, so none of this costs anything.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  # -- Without fsGroup the mounted volume is root-owned and the process cannot
+  # write, which surfaces as permission denied on the first request rather than
+  # at startup. Segments are written 0640 and the directory 0750, so group
+  # ownership is what lets the verify CronJob read the evidence.
+  fsGroup: 65532
+  # -- OnRootMismatch, so the kubelet does not walk and chown a volume holding
+  # months of segments on every pod start. The evidence directory only grows.
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  privileged: false
+  capabilities:
+    drop:
+      - ALL
+
+serviceAccount:
+  # -- Create a ServiceAccount for the proxy.
+  create: true
+  # -- Name to use. Empty means the generated fullname when create is true,
+  # otherwise "default".
+  name: ""
+  # -- Annotations, e.g. for IRSA or Workload Identity when archiving to S3.
+  annotations: {}
+  # -- The proxy never calls the Kubernetes API. Not mounting the token means a
+  # compromised proxy has no cluster credential to use.
+  automountServiceAccountToken: false
+
+service:
+  # -- ClusterIP is the only sensible type here. Exposing an evidence proxy
+  # outside the cluster is a decision this chart does not make easy on purpose.
+  type: ClusterIP
+  # -- Service port.
+  port: 8080
+  # -- Node port when type is NodePort.
+  nodePort: null
+  annotations: {}
+  labels: {}
+
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 3
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3
+  successThreshold: 1
+
+startupProbe:
+  # -- Off by default; the process is listening in milliseconds.
+  enabled: false
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 30
+
+# -- Time the pod gets to finish in-flight streamed responses, drain the
+# evidence queue and fsync. 30 seconds is plenty. A clean termination loses
+# nothing.
+terminationGracePeriodSeconds: 30
+
+# -- Extra command line arguments appended after `serve`.
+extraArgs: []
+# -- Extra environment variables, e.g. [{name: HTTPS_PROXY, value: ...}]. Never
+# put a credential here; use `secret` or `extraEnvFrom`.
+extraEnv: []
+# -- Extra envFrom sources, e.g. [{secretRef: {name: my-secret}}].
+extraEnvFrom: []
+# -- Extra volumes on the pod.
+extraVolumes: []
+# -- Extra volume mounts on the proxy container.
+extraVolumeMounts: []
+
+# -- Annotations on the proxy pod.
+podAnnotations: {}
+# -- Labels on the proxy pod.
+podLabels: {}
+# -- Node selector for the proxy pod. Note that the verify CronJob mounts the
+# same claim, so with a ReadWriteOnce volume both need to land on the same node.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+# -- DNS policy and config, passed through untouched.
+dnsPolicy: ""
+dnsConfig: {}
+# -- Host aliases, e.g. when the model server is outside the cluster.
+hostAliases: []
+
+podDisruptionBudget:
+  # -- Off by default, and the reason is worth understanding before you turn it
+  # on. With a single replica, minAvailable: 1 means a node drain can never
+  # evict this pod and the drain blocks until somebody intervenes. That is
+  # either exactly what you want, because the NetworkPolicy makes the proxy the
+  # only route to the model server and losing it is an outage, or exactly what
+  # you do not want, because it wedges your node maintenance. There is no
+  # default that is right for both.
+  enabled: false
+  minAvailable: 1
+  # -- Set this instead of minAvailable, not as well.
+  maxUnavailable: null
+  labels: {}
+  annotations: {}
+
+# A CronJob that runs `flugschreiber verify` against a read-only mount of the
+# evidence volume and exits non-zero when the chain is broken, so a broken
+# chain surfaces through whatever already alerts on failed Jobs. A verifier
+# that can write to what it verifies is not a verifier.
+verify:
+  enabled: true
+  # -- Cron schedule. Hourly by default.
+  schedule: "0 * * * *"
+  # -- IANA time zone for the schedule, e.g. Europe/Berlin. Needs Kubernetes
+  # 1.27 or later. Empty uses the controller's zone, which is usually UTC.
+  timeZone: ""
+  # -- Emit the result as JSON so the pod log can be scraped for head_hash.
+  json: true
+  # -- Never. A retry that passes after a failure hides the failure, and verify
+  # is a deterministic function of files on disk, so a retry cannot help.
+  restartPolicy: Never
+  # -- 0 for the same reason: one attempt, one clear Failed Job to alert on.
+  # Raise it only if the Jobs you see failing are failing on volume attachment
+  # or image pulls rather than on the chain.
+  backoffLimit: 0
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  activeDeadlineSeconds: 3600
+  # -- Keep failed Jobs around. They are the alert and the record of it.
+  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 1
+  suspend: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  extraArgs: []
+  extraEnv: []
+
+# The proxy's own NetworkPolicy. Useful, but it is not the one that matters.
+networkPolicy:
+  # -- Restrict who may reach the proxy.
+  enabled: false
+  # -- Ingress peers, in the NetworkPolicy `from` schema. An empty list with
+  # enabled: true denies all ingress, which will break your applications, so
+  # the chart fails the render rather than letting you find out at runtime.
+  # Example:
+  #   ingressFrom:
+  #     - namespaceSelector:
+  #         matchLabels: {kubernetes.io/metadata.name: apps}
+  ingressFrom: []
+  # -- Extra ingress ports beyond the proxy port, e.g. a metrics port on a
+  # different listener.
+  extraIngressPorts: []
+  monitoring:
+    # -- Allow a Prometheus namespace to scrape /metrics.
+    enabled: false
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+    podSelector: {}
+  egress:
+    # -- Restrict where the proxy may connect. A proxy that can only reach the
+    # model server cannot be used to move evidence somewhere else.
+    enabled: false
+    # -- Allow UDP and TCP 53 to kube-dns. Without this nothing resolves.
+    dns: true
+    # -- Peers the proxy may connect to, in the NetworkPolicy `to` schema.
+    # Typically the model server, and the object storage endpoint if you
+    # archive. Ports are per-rule, so put them in the rules themselves.
+    rules: []
+
+# The policy that turns a nice log into evidence. It goes on the model server,
+# not on the proxy, and it says: only the proxy may talk to you.
+#
+# Without it an application with the old base URL in a ConfigMap bypasses the
+# proxy silently. With it, the claim "everything that reached the model is in
+# this log" is a property of the cluster rather than an assumption about how
+# people configured their applications.
+#
+# Check that your CNI actually enforces NetworkPolicy. Several do not by
+# default, and a policy that is not enforced is worse than no policy, because
+# you will believe it.
+modelServer:
+  networkPolicy:
+    enabled: false
+    # -- Namespace the model server runs in. Empty means the release namespace.
+    # Installing objects into another namespace needs the right RBAC.
+    namespace: ""
+    # -- Selects the model server pods the policy protects. Required when
+    # enabled. An empty selector would select every pod in the namespace, so
+    # the chart refuses it.
+    podSelector:
+      matchLabels: {}
+      # matchLabels:
+      #   app: vllm
+    # -- Ports on the model server that only the proxy may reach.
+    ports:
+      - protocol: TCP
+        port: 8000
+    # -- Extra peers allowed to reach the model server on those ports, in the
+    # NetworkPolicy `from` schema. Keep this list short and know why each entry
+    # is on it; every entry is a path around the recording proxy. A monitoring
+    # namespace scraping the model server's own /metrics is the usual honest
+    # reason.
+    additionalIngressFrom: []
+
+metrics:
+  # -- Serve Prometheus text exposition on the proxy port.
+  #
+  # Sets FLUGSCHREIBER_METRICS_ENABLED, and matches the binary's own default so
+  # that installing the chart does not quietly turn off an endpoint a
+  # `docker run` of the same image would have served. The counters are
+  # collected either way; this decides whether anything can read them.
+  #
+  # The endpoint shares the proxy's listener, so everything that can reach the
+  # proxy can read it. Nothing in the exposition carries a prompt, a
+  # completion, a client hash or a session id. The model name is a label, which
+  # is worth knowing if your model names are themselves informative.
+  #
+  # Turning this off while a scrape is still configured is worth avoiding: an
+  # unmatched path is proxied upstream rather than refused, so a scrape of a
+  # metrics-less proxy arrives at the model server.
+  enabled: true
+  # -- Path the monitors scrape. The proxy serves the exposition on /metrics
+  # and has no setting to move it, so the chart refuses any other value instead
+  # of rendering a monitor that scrapes the wrong path forever.
+  path: /metrics
+  serviceMonitor:
+    # -- Create a Prometheus Operator ServiceMonitor. The chart fails the render
+    # if the CRD is missing, rather than silently producing nothing.
+    enabled: false
+    # -- Namespace for the ServiceMonitor. Empty means the release namespace.
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    # -- Extra labels, e.g. the release label your Prometheus selects on.
+    labels: {}
+    annotations: {}
+    honorLabels: false
+    relabelings: []
+    metricRelabelings: []
+    # -- Render without checking for the CRD. For `helm template` offline.
+    skipCRDCheck: false
+  podMonitor:
+    # -- Create a PodMonitor instead. Use one or the other, not both.
+    enabled: false
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    annotations: {}
+    honorLabels: false
+    relabelings: []
+    metricRelabelings: []
+    skipCRDCheck: false
+
+# Values read by the sidecar named templates in templates/_sidecar.tpl. They
+# are not rendered by this chart; they exist so a chart that depends on this
+# one can include a Flugschreiber container in its own pod. See the chart
+# README, section "Sidecar topology", and deploy/examples/sidecar.
+sidecar:
+  # -- Listen address for the sidecar. Bind to loopback so the recorder is
+  # reachable only from inside the pod.
+  listen: "127.0.0.1:8080"
+  # -- Name of the sidecar container.
+  containerName: flugschreiber
+  # -- Name of the evidence volume inside the application pod.
+  volumeName: flugschreiber-evidence
+  # -- Run as a native sidecar (an init container with restartPolicy: Always)
+  # so it starts before the application and is not killed while the application
+  # is still finishing. Needs Kubernetes 1.29 or later.
+  nativeSidecar: false

@@ -107,8 +107,11 @@ jobs:
       # invocation itself is tested.
       - name: Run the documented quickstart command
         run: |
+          # --tmpfs /tmp because the root filesystem is read-only and
+          # report and export have to write their output somewhere. Without
+          # it both commands fail, which is the point of running them here.
           docker run -d --rm --name fs \
-            --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            --read-only --tmpfs /tmp --cap-drop=ALL --security-opt=no-new-privileges \
             -p 8080:8080 -v fs-evidence:/var/lib/flugschreiber \
             flugschreiber:ci serve --mock-upstream
 
@@ -127,6 +130,27 @@ jobs:
 
           docker exec fs flugschreiber verify --dir /var/lib/flugschreiber
           docker exec fs flugschreiber report --dir /var/lib/flugschreiber --out /tmp/reports
+          docker exec fs flugschreiber coverage --dir /var/lib/flugschreiber
+          docker exec fs flugschreiber retention --dir /var/lib/flugschreiber
+          # Written into the evidence volume rather than the tmpfs, because
+          # docker cp cannot read a tmpfs mount and the volume is already owned
+          # by the nonroot user the image runs as.
+          docker exec fs flugschreiber export \
+            --dir /var/lib/flugschreiber --out /var/lib/flugschreiber/bundle.tar.gz
+
+          # The bundle must never carry the signing key or the client salt.
+          # The image is distroless and has no shell, so a throwaway container
+          # does the inspecting. Running tar inside fs would fail silently and
+          # the check would pass no matter what the bundle contained.
+          contents=$(docker run --rm -v fs-evidence:/e busybox tar tzf /e/bundle.tar.gz)
+          echo "$contents"
+          if echo "$contents" | grep -E 'signing-key|client-salt'; then
+            echo "the evidence bundle leaked a secret"
+            exit 1
+          fi
+          echo "$contents" | grep -q 'VERIFY.md'
+          echo "$contents" | grep -q 'public-key.pem'
+
           docker rm -f fs
 
       - name: Generate SBOM
@@ -140,6 +164,40 @@ jobs:
         with:
           name: sbom
           path: sbom.spdx.json
+
+  # The chart carries the defaults that decide whether a deployment records
+  # anything, and it rots faster than the code because nothing compiles it. A
+  # value renamed in values.yaml and not in a template installs cleanly and
+  # runs the proxy on defaults nobody chose.
+  #
+  # No cluster is involved. `helm template` is a pure function of the chart and
+  # the values, and kubeconform reads JSON schemas over HTTP.
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3.16 or later, for --skip-schema-validation. The checks that prove a
+      # bad values file is refused by the template rather than only by the
+      # schema need it.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      # A missing kubeconform costs the schema check and nothing else, so the
+      # download not working is not a reason to fail a pull request.
+      - name: Install kubeconform
+        run: |
+          url=https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
+          if curl -fsSL --retry 3 "$url" | tar -xz -C /usr/local/bin kubeconform; then
+            kubeconform -v
+          else
+            echo "kubeconform could not be installed. The chart is still linted and rendered."
+          fi
+
+      - name: Lint, render and schema check the chart
+        run: ./deploy/helm/check.sh
 
   # The generated documents carry claims we have committed to not making. A
   # grep is a cheap way to keep that promise honest as the copy evolves.

@@ -1,0 +1,1 @@
+{"data":[{"embedding":[-0.252,-0.301,0.819,0.853,-0.53,0.308,0.346,-0.496],"index":0,"object":"embedding"},{"embedding":[0.929,0.103,-0.047,0.142,0.542,-0.293,0.92,-0.746],"index":1,"object":"embedding"}],"model":"flugschreiber-mock-1","object":"list","usage":{"prompt_tokens":6,"total_tokens":6}}

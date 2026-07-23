@@ -50,7 +50,7 @@ type namedPattern struct {
 // BuiltinPatterns are the redaction rules available by name. They are
 // deliberately conservative: they target formats that are unambiguously
 // identifying. They are not a substitute for a DPIA, and no regex-based
-// redaction can be complete — free text can carry personal data in forms no
+// redaction can be complete: free text can carry personal data in forms no
 // pattern will match. This is stated in the generated documentation too.
 var BuiltinPatterns = map[string]string{
 	"email":       `[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`,

@@ -1,0 +1,33 @@
+{{- if eq .Values.mode "central" }}
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- /*
+With a single replica this is a sharp tool. minAvailable: 1 means the pod can
+never be evicted voluntarily, so a node drain waits for a human. That is right
+when the NetworkPolicy has made the proxy the only route to the model server
+and losing it is an outage. It is wrong when it quietly wedges cluster
+maintenance. The chart ships it off and leaves the choice with the operator.
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+    {{- with .Values.podDisruptionBudget.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with (merge (dict) .Values.podDisruptionBudget.annotations .Values.commonAnnotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "flugschreiber.proxySelectorLabels" . | nindent 6 }}
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+{{- end }}
+{{- end }}

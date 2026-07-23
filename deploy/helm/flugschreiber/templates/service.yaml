@@ -1,0 +1,27 @@
+{{- if eq .Values.mode "central" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+    {{- with .Values.service.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with (merge (dict) .Values.service.annotations .Values.commonAnnotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "flugschreiber.proxySelectorLabels" . | nindent 4 }}
+{{- end }}

@@ -64,6 +64,48 @@ type Event struct {
 	// the caller of the intervention endpoint and is not verified by
 	// Flugschreiber.
 	Actor string `json:"actor,omitempty"`
+
+	// Decision is the structured outcome of a human_intervention. Article 14
+	// oversight is far easier to evidence when the outcome is a value that can
+	// be counted than when it is buried in free text.
+	Decision string `json:"decision,omitempty"`
+
+	// RefRequestID points at the inference record this event concerns, for
+	// events that comment on an interaction rather than being one.
+	RefRequestID string `json:"ref_request_id,omitempty"`
+}
+
+// Decisions a human_intervention may record.
+const (
+	DecisionApprove  = "approve"
+	DecisionOverride = "override"
+	DecisionReject   = "reject"
+	DecisionEscalate = "escalate"
+	DecisionHalt     = "halt"
+	DecisionAnnotate = "annotate"
+)
+
+// ValidDecision reports whether d is a recognised intervention outcome.
+func ValidDecision(d string) bool {
+	switch d {
+	case DecisionApprove, DecisionOverride, DecisionReject,
+		DecisionEscalate, DecisionHalt, DecisionAnnotate:
+		return true
+	}
+	return false
+}
+
+// RecordableEventType reports whether an event type may be submitted through
+// the events API. Inference records are deliberately excluded: they are written
+// only by the proxy from observed traffic, and letting a caller post one would
+// mean anyone holding the events token could fabricate a model interaction.
+func RecordableEventType(t string) bool {
+	switch t {
+	case EventHumanIntervention, EventSessionStart, EventSessionEnd,
+		EventConfigChange, EventToolCall, EventToolResult, EventSystemEvent:
+		return true
+	}
+	return false
 }
 
 // Params records the generation parameters that were requested. Only

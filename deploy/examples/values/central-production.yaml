@@ -1,0 +1,91 @@
+# A central deployment with the parts that make coverage defensible turned on.
+#
+#   helm install flugschreiber deploy/helm/flugschreiber \
+#     -n ai --create-namespace -f central-production.yaml
+
+config:
+  upstream: http://vllm.models.svc.cluster.local:8000
+  contentMode: hash
+  retentionDays: 365
+  # Signing is on by default and left on. Without it the chain proves that
+  # nothing was edited without rewriting everything after it, which is exactly
+  # what somebody with write access to the volume can do.
+  signingDisabled: false
+  # A minute rather than the default five. The interval is the size of the
+  # window such a person could rewrite without breaking a signature.
+  checkpointInterval: 1m
+  deployment:
+    organisation: Muster GmbH
+    systemName: Support Assistant
+    purpose: Answering customer questions about order status and returns
+    contact: ai-governance@muster.example
+    role: deployer
+    environment: production
+
+persistence:
+  size: 50Gi
+  storageClass: fast-ssd
+
+# The policy that stops applications going around the proxy. Without this the
+# log describes the traffic that happened to be pointed at it.
+modelServer:
+  networkPolicy:
+    enabled: true
+    namespace: models
+    podSelector:
+      matchLabels:
+        app: vllm
+    ports:
+      - protocol: TCP
+        port: 8000
+
+# Only the application namespace may reach the proxy, and the proxy may only
+# reach DNS and the model server.
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: apps
+  monitoring:
+    enabled: true
+  egress:
+    enabled: true
+    rules:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: models
+            podSelector:
+              matchLabels:
+                app: vllm
+        ports:
+          - protocol: TCP
+            port: 8000
+
+verify:
+  enabled: true
+  schedule: "0 * * * *"
+  timeZone: Europe/Berlin
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+# The upstream key and the oversight events token live in a Secret you manage,
+# not in this file and not in the release's stored values. Both keys are read
+# optionally, so a Secret holding only one of them is fine.
+#
+#   kubectl create secret generic flugschreiber-credentials -n ai \
+#     --from-literal=upstream-api-key=sk-... \
+#     --from-literal=events-token=$(openssl rand -hex 32)
+#
+# Leave events-token out and POST /flugschreiber/v1/events keeps returning 404.
+# That is the right answer until you know which system is allowed to say that a
+# human reviewed a model output, because a forged oversight record in a
+# tamper-evident log is worse than no record at all.
+secret:
+  existingSecret: flugschreiber-credentials

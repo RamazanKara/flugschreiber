@@ -1,0 +1,31 @@
+apiVersion: v2
+name: flugschreiber
+description: Tamper-evident audit logs and EU AI Act documentation inputs for self-hosted LLMs
+type: application
+
+# version is the chart version. appVersion is the Flugschreiber release this
+# chart was written against, and image.tag defaults to it, so the chart never
+# silently pulls a moving :latest tag.
+version: 0.1.0
+appVersion: "0.1.0"
+
+home: https://github.com/flugschreiber/flugschreiber
+sources:
+  - https://github.com/flugschreiber/flugschreiber
+
+keywords:
+  - ai-act
+  - audit
+  - evidence
+  - llm
+  - proxy
+  - openai
+
+maintainers:
+  - name: Flugschreiber maintainers
+    url: https://github.com/flugschreiber/flugschreiber
+
+annotations:
+  # A single writer owns the chain, so this chart deliberately has no
+  # replicaCount and refuses to render more than one pod. See values.yaml.
+  flugschreiber.io/single-writer: "true"

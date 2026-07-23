@@ -23,10 +23,19 @@ import (
 //go:embed templates/*.tmpl
 var templateFS embed.FS
 
-// Artifact is one generated document.
+// Format names a rendering of a document. Every document is written twice, and
+// a caller counting gaps or listing what it produced has to be able to tell the
+// source from the page built out of it.
+const (
+	FormatMarkdown = "markdown"
+	FormatHTML     = "html"
+)
+
+// Artifact is one generated document in one rendering.
 type Artifact struct {
 	Filename string
 	Title    string
+	Format   string // FormatMarkdown or FormatHTML
 	Content  []byte
 }
 
@@ -51,10 +60,11 @@ var artifacts = []struct {
 	template string
 	filename string
 	title    string
+	lang     string
 }{
-	{"technical-documentation.md.tmpl", "technical-documentation.md", "Annex IV technical documentation skeleton"},
-	{"transparency-en.md.tmpl", "transparency-article-50-en.md", "Article 50 transparency pack (English)"},
-	{"transparency-de.md.tmpl", "transparency-article-50-de.md", "Article 50 transparency pack (German)"},
+	{"technical-documentation.md.tmpl", "technical-documentation.md", "Annex IV technical documentation skeleton", "en"},
+	{"transparency-en.md.tmpl", "transparency-article-50-en.md", "Article 50 transparency pack (English)", "en"},
+	{"transparency-de.md.tmpl", "transparency-article-50-de.md", "Article 50 transparency pack (German)", "de"},
 }
 
 // Generate renders every artifact.
@@ -77,10 +87,55 @@ func Generate(in Input) (*Generated, error) {
 		out.Artifacts = append(out.Artifacts, Artifact{
 			Filename: a.filename,
 			Title:    a.title,
+			Format:   FormatMarkdown,
 			Content:  normalise(buf.Bytes()),
 		})
 	}
+
+	// Each document is also rendered to a standalone HTML page. The Markdown
+	// stays the source of truth, so the pages are appended after it rather than
+	// interleaved: the first artifacts are still the documents themselves.
+	pages := make([]Artifact, 0, len(out.Artifacts))
+	for i, a := range out.Artifacts {
+		page, err := RenderHTML(a.Content, HTMLOptions{
+			Title:      a.Title,
+			Lang:       artifacts[i].lang,
+			SourceFile: a.Filename,
+			Version:    in.Version,
+			Generated:  in.Now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		pages = append(pages, Artifact{
+			Filename: strings.TrimSuffix(a.Filename, ".md") + ".html",
+			// The page carries the document's own title inside it, taken from
+			// the Markdown heading. The artifact title is what an operator sees
+			// in a list of files, so it has to say which of the two this is.
+			Title:   a.Title + ", HTML rendering",
+			Format:  FormatHTML,
+			Content: page,
+		})
+	}
+	out.Artifacts = append(out.Artifacts, pages...)
+
 	return out, nil
+}
+
+// TODOs counts the passages that still need a human.
+//
+// Only the Markdown documents are counted. Each HTML page is a rendering of one
+// of them and carries the same markers, so counting every artifact would report
+// each gap twice and tell an operator to go and fill in work that does not
+// exist.
+func (g *Generated) TODOs() int {
+	n := 0
+	for _, a := range g.Artifacts {
+		if a.Format == FormatMarkdown {
+			n += strings.Count(string(a.Content), todoMarker)
+		}
+	}
+	return n
 }
 
 // Write saves the artifacts into dir.
@@ -162,9 +217,12 @@ func funcs() template.FuncMap {
 			}
 			return s
 		},
-		"orDash": func(s string) string {
+		// orNA fills a table cell the log had no value for. It reads the same in
+		// Markdown, in the rendered page and when a cell is read aloud, which a
+		// dash does not.
+		"orNA": func(s string) string {
 			if s == "" {
-				return "—"
+				return "n/a"
 			}
 			return s
 		},

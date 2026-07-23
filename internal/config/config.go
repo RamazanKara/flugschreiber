@@ -37,6 +37,11 @@ type Config struct {
 	// send one. Client credentials are otherwise passed through untouched.
 	UpstreamAPIKey string `json:"upstream_api_key"`
 
+	// EventsToken guards the oversight events endpoint. While it is empty the
+	// endpoint stays disabled, because an unauthenticated writer to the
+	// evidence log would let anyone fabricate a human-oversight record.
+	EventsToken string `json:"events_token"`
+
 	DataDir         string   `json:"data_dir"`
 	ContentMode     string   `json:"content_mode"`
 	RedactPatterns  []string `json:"redact_patterns"`
@@ -49,12 +54,73 @@ type Config struct {
 	RequestTimeout  Duration `json:"request_timeout"`
 	ShutdownTimeout Duration `json:"shutdown_timeout"`
 
+	// CheckpointInterval is how often the chain head is signed while the log is
+	// being written to.
+	CheckpointInterval Duration `json:"checkpoint_interval"`
+
+	// SigningDisabled turns off checkpoint signing. Signing is on by default
+	// because a chain without checkpoints proves internal consistency only, and
+	// an operator who wants that weaker property should choose it deliberately.
+	SigningDisabled bool `json:"signing_disabled"`
+
 	LogLevel string `json:"log_level"`
+
+	// MetricsEnabled exposes /metrics. Samples are collected either way; this
+	// only controls whether the endpoint is served, because an operator may
+	// want the counters without opening another route.
+	MetricsEnabled bool `json:"metrics_enabled"`
+
+	// Archive ships sealed segments to a second location. It is archival and
+	// never the write path: object stores cannot append, so the local segment
+	// is always primary and only a rotated, closed segment is uploaded.
+	Archive Archive `json:"archive"`
 
 	// Deployment describes the system this proxy sits in front of. It is used
 	// only to pre-fill the generated documentation; nothing here changes proxy
 	// behaviour.
 	Deployment Deployment `json:"deployment"`
+}
+
+// Archive backends.
+const (
+	ArchiveNone = "none"
+	ArchiveDir  = "dir"
+	ArchiveS3   = "s3"
+)
+
+// Archive configures replication of sealed evidence to a second location.
+type Archive struct {
+	// Backend is none, dir or s3. Empty means none.
+	Backend string `json:"backend"`
+
+	// Dir is the destination for the dir backend, which is useful for a second
+	// mounted volume with different credentials.
+	Dir string `json:"dir"`
+
+	// Prefix is prepended to every object key so one bucket can hold the
+	// evidence of several deployments. It is applied by the evidence store, not
+	// by the backend, so that it is never applied twice.
+	Prefix string `json:"prefix"`
+
+	Bucket     string `json:"bucket"`
+	Region     string `json:"region"`
+	Endpoint   string `json:"endpoint"`
+	Addressing string `json:"addressing"`
+
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	SessionToken    string `json:"session_token"`
+
+	StorageClass string `json:"storage_class"`
+	SSE          string `json:"sse"`
+	SSEKMSKeyID  string `json:"sse_kms_key_id"`
+
+	// ObjectLockMode and ObjectLockRetainFor put uploaded evidence under a
+	// bucket retention period. This is the control that closes the gap the hash
+	// chain leaves open, because it stops the writer altering what it already
+	// wrote.
+	ObjectLockMode      string   `json:"object_lock_mode"`
+	ObjectLockRetainFor Duration `json:"object_lock_retain_for"`
 }
 
 // Deployment holds the organisational context a technical documentation file
@@ -98,15 +164,17 @@ func (d Duration) Std() time.Duration { return time.Duration(d) }
 // Default returns the configuration used when nothing is specified.
 func Default() Config {
 	return Config{
-		Listen:          ":8080",
-		DataDir:         "/var/lib/flugschreiber",
-		ContentMode:     content.DefaultMode,
-		SegmentMaxBytes: evidence.DefaultSegmentMaxBytes,
-		RetentionDays:   RetentionFloorDays,
-		RequestTimeout:  Duration(10 * time.Minute),
-		ShutdownTimeout: Duration(15 * time.Second),
-		LogLevel:        "info",
-		Deployment:      Deployment{Role: "deployer", Environment: "production"},
+		Listen:             ":8080",
+		DataDir:            "/var/lib/flugschreiber",
+		ContentMode:        content.DefaultMode,
+		SegmentMaxBytes:    evidence.DefaultSegmentMaxBytes,
+		RetentionDays:      RetentionFloorDays,
+		RequestTimeout:     Duration(10 * time.Minute),
+		ShutdownTimeout:    Duration(15 * time.Second),
+		CheckpointInterval: Duration(evidence.DefaultCheckpointInterval),
+		LogLevel:           "info",
+		MetricsEnabled:     true,
+		Deployment:         Deployment{Role: "deployer", Environment: "production"},
 	}
 }
 
@@ -134,6 +202,18 @@ func (c *Config) ApplyEnv() error {
 	str("LISTEN", &c.Listen)
 	str("UPSTREAM", &c.Upstream)
 	str("UPSTREAM_API_KEY", &c.UpstreamAPIKey)
+	str("EVENTS_TOKEN", &c.EventsToken)
+	str("ARCHIVE_BACKEND", &c.Archive.Backend)
+	str("ARCHIVE_DIR", &c.Archive.Dir)
+	str("ARCHIVE_PREFIX", &c.Archive.Prefix)
+	str("ARCHIVE_BUCKET", &c.Archive.Bucket)
+	str("ARCHIVE_REGION", &c.Archive.Region)
+	str("ARCHIVE_ENDPOINT", &c.Archive.Endpoint)
+	str("ARCHIVE_ADDRESSING", &c.Archive.Addressing)
+	str("ARCHIVE_ACCESS_KEY_ID", &c.Archive.AccessKeyID)
+	str("ARCHIVE_SECRET_ACCESS_KEY", &c.Archive.SecretAccessKey)
+	str("ARCHIVE_SESSION_TOKEN", &c.Archive.SessionToken)
+	str("ARCHIVE_OBJECT_LOCK_MODE", &c.Archive.ObjectLockMode)
 	str("DATA_DIR", &c.DataDir)
 	str("CONTENT_MODE", &c.ContentMode)
 	str("TLS_CERT_FILE", &c.TLSCertFile)
@@ -162,6 +242,20 @@ func (c *Config) ApplyEnv() error {
 			return fmt.Errorf("config: %sRETENTION_DAYS: %w", EnvPrefix, err)
 		}
 		c.RetentionDays = n
+	}
+	if v, ok := os.LookupEnv(EnvPrefix + "METRICS_ENABLED"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: %sMETRICS_ENABLED: %w", EnvPrefix, err)
+		}
+		c.MetricsEnabled = b
+	}
+	if v, ok := os.LookupEnv(EnvPrefix + "SIGNING_DISABLED"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: %sSIGNING_DISABLED: %w", EnvPrefix, err)
+		}
+		c.SigningDisabled = b
 	}
 	if v, ok := os.LookupEnv(EnvPrefix + "SEGMENT_MAX_BYTES"); ok {
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -203,6 +297,20 @@ func (c *Config) Validate() error {
 		return fmt.Errorf(
 			"config: retention of %d days is below the %d-day floor; AI Act Article 19 expects at least six months of logs",
 			c.RetentionDays, RetentionFloorDays)
+	}
+	switch c.Archive.Backend {
+	case "", ArchiveNone:
+	case ArchiveDir:
+		if c.Archive.Dir == "" {
+			return fmt.Errorf("config: archive backend %q needs archive.dir", ArchiveDir)
+		}
+	case ArchiveS3:
+		if c.Archive.Bucket == "" {
+			return fmt.Errorf("config: archive backend %q needs archive.bucket", ArchiveS3)
+		}
+	default:
+		return fmt.Errorf("config: archive backend %q must be one of %s, %s or %s",
+			c.Archive.Backend, ArchiveNone, ArchiveDir, ArchiveS3)
 	}
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return errors.New("config: TLS needs both a certificate and a key")

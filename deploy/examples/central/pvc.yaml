@@ -1,0 +1,26 @@
+# The evidence volume.
+#
+# This is where the whole arrangement is weakest. Anyone who can write here can
+# recompute the chain from scratch and produce a log that verifies perfectly.
+# Keep the set of humans who can write to this claim smaller than the set who
+# can deploy the application, and put the segments somewhere with a retention
+# lock if you can.
+#
+# ReadWriteOnce is correct. One pod writes, and that is not a limitation to be
+# worked around with ReadWriteMany: a second writer breaks the chain.
+#
+# Sizing. In hash mode a record is around 600 bytes, so a million interactions
+# is well under a gigabyte. In store mode it depends entirely on your prompt
+# sizes, so measure for a day before committing to a number.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flugschreiber-evidence
+  labels:
+    app.kubernetes.io/name: flugschreiber
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

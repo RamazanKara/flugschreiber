@@ -143,11 +143,18 @@ func TestGenerateMatchesGoldenFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if len(generated.Artifacts) != 3 {
-		t.Fatalf("generated %d artifacts, want 3", len(generated.Artifacts))
+	if len(generated.Artifacts) != 6 {
+		t.Fatalf("generated %d artifacts, want 6 (three Markdown documents and an HTML rendering of each)", len(generated.Artifacts))
 	}
 
 	for _, a := range generated.Artifacts {
+		// The HTML renderings are deliberately not golden files. They are 20 KB
+		// each and a one-line stylesheet change would produce a diff nobody can
+		// read, which CONTRIBUTING requires a human to read. Their structure is
+		// covered by TestGeneratedDocumentsRenderToValidPages.
+		if strings.HasSuffix(a.Filename, ".html") {
+			continue
+		}
 		golden := filepath.Join("testdata", "golden", a.Filename)
 		if *update {
 			if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
@@ -168,6 +175,66 @@ func TestGenerateMatchesGoldenFiles(t *testing.T) {
 	}
 	if *update {
 		t.Log("golden files rewritten")
+	}
+}
+
+// The count is what the CLI tells an operator to go and deal with, so counting
+// the HTML renderings as well would send them looking for twice the work that
+// exists.
+func TestTODOsCountsEachGapOnce(t *testing.T) {
+	generated, err := Generate(fixtureInput(t, buildFixture(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := 0
+	for _, a := range generated.Artifacts {
+		if a.Format == FormatMarkdown {
+			want += strings.Count(string(a.Content), "**TODO:**")
+		}
+	}
+	if want == 0 {
+		t.Fatal("the fixture produced no TODO markers, so this test proves nothing")
+	}
+	if got := generated.TODOs(); got != want {
+		t.Errorf("TODOs() = %d, want %d: the HTML renderings carry the same markers as the documents they render", got, want)
+	}
+
+	// The generated pages happen to render every marker as markup, so summing
+	// over all six artifacts gives the right answer today by accident. The
+	// contract is that the format decides, not whether a page happens to spell
+	// the marker out, so it is asserted against a page that does.
+	byHand := &Generated{Artifacts: []Artifact{
+		{Filename: "doc.md", Format: FormatMarkdown, Content: []byte("**TODO:** name the operator.\n")},
+		{Filename: "doc.html", Format: FormatHTML, Content: []byte("<pre><code>**TODO:** name the operator.\n</code></pre>\n")},
+	}}
+	if got := byHand.TODOs(); got != 1 {
+		t.Errorf("TODOs() = %d, want 1: a marker quoted by an HTML rendering is not a second gap", got)
+	}
+}
+
+// Two rows in the CLI listing that read the same tell an operator nothing about
+// which file is which.
+func TestEveryArtifactHasItsOwnTitle(t *testing.T) {
+	generated, err := Generate(fixtureInput(t, buildFixture(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]string{}
+	for _, a := range generated.Artifacts {
+		if other, dup := seen[a.Title]; dup {
+			t.Errorf("%s and %s share the title %q", other, a.Filename, a.Title)
+		}
+		seen[a.Title] = a.Filename
+
+		want := FormatMarkdown
+		if strings.HasSuffix(a.Filename, ".html") {
+			want = FormatHTML
+		}
+		if a.Format != want {
+			t.Errorf("%s has Format %q, want %q", a.Filename, a.Format, want)
+		}
 	}
 }
 

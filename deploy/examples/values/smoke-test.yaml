@@ -1,0 +1,25 @@
+# The smallest thing that runs on a cluster with no GPU and no model server,
+# so you can see the chart work before you wire anything real to it.
+#
+#   helm install fs deploy/helm/flugschreiber -n fs-test --create-namespace \
+#     -f smoke-test.yaml
+#   kubectl -n fs-test port-forward svc/fs-flugschreiber 8080:8080
+#   curl localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+#     -d '{"model":"any","messages":[{"role":"user","content":"hello"}]}'
+#   kubectl -n fs-test exec deploy/fs-flugschreiber -- \
+#     flugschreiber verify --dir /var/lib/flugschreiber
+#
+# Nothing here is suitable for anything but a demo. The evidence is on an
+# emptyDir and is deleted with the pod, and the upstream is a built-in fake
+# whose every response says so in its own text.
+
+config:
+  mockUpstream: true
+
+persistence:
+  enabled: false
+
+# Would otherwise verify an empty volume of its own once an hour and report
+# success, which is worse than not running it at all.
+verify:
+  enabled: false

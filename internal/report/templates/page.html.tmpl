@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="{{ .Lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="generator" content="Flugschreiber {{ .Version }}">
+<meta name="robots" content="noindex">
+<title>{{ .Title }}</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1b1f23;
+  --muted: #5b6570;
+  --rule: #dfe3e8;
+  --panel: #f6f8fa;
+  --accent: #0a4f8f;
+  --code-bg: #f1f4f7;
+  --quote-edge: #c3ccd6;
+  --gap-bg: #fff4d9;
+  --gap-edge: #b06c00;
+  --gap-fg: #5d3a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15181c;
+    --fg: #e4e9ef;
+    --muted: #97a1ad;
+    --rule: #2b3138;
+    --panel: #1b2026;
+    --accent: #7cb7ff;
+    --code-bg: #1f242a;
+    --quote-edge: #3a424b;
+    --gap-bg: #2e2411;
+    --gap-edge: #d9a02b;
+    --gap-fg: #f2ce7e;
+  }
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.62;
+}
+.doc {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 3rem 1.25rem 4rem;
+}
+.doc > *:first-child { margin-top: 0; }
+
+h1, h2, h3, h4, h5, h6 { line-height: 1.25; font-weight: 650; margin: 2.4rem 0 0.8rem; }
+h1 { font-size: 1.95rem; margin-bottom: 1.2rem; letter-spacing: -0.015em; }
+h2 { font-size: 1.4rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--rule); }
+h3 { font-size: 1.12rem; }
+h4, h5, h6 { font-size: 1rem; }
+p { margin: 0 0 1rem; }
+a { color: var(--accent); text-underline-offset: 2px; }
+hr { border: 0; border-top: 1px solid var(--rule); margin: 2.6rem 0; }
+strong { font-weight: 650; }
+
+nav.toc {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 1rem 1.4rem 1.2rem;
+  margin: 0 0 2.5rem;
+  font-size: 0.94rem;
+}
+nav.toc h2 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  border: 0;
+  margin: 0 0 0.6rem;
+  padding: 0;
+}
+nav.toc ol { list-style: none; margin: 0; padding: 0; }
+nav.toc li { margin: 0.18rem 0; }
+nav.toc a { text-decoration: none; }
+nav.toc a:hover { text-decoration: underline; }
+.toc-3 { padding-left: 1.3rem; }
+.toc-4 { padding-left: 2.6rem; }
+
+.gaps {
+  border: 1px solid var(--gap-edge);
+  border-left: 6px solid var(--gap-edge);
+  background: var(--gap-bg);
+  color: var(--gap-fg);
+  border-radius: 0 5px 5px 0;
+  padding: 0.75rem 1rem;
+  margin: 0 0 2rem;
+  font-size: 0.95rem;
+}
+.gaps.clear {
+  border-color: var(--rule);
+  border-left-color: var(--rule);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+blockquote {
+  margin: 1.4rem 0;
+  padding: 0.1rem 0 0.1rem 1.1rem;
+  border-left: 3px solid var(--quote-edge);
+  color: var(--muted);
+}
+blockquote.todo {
+  border: 1px solid var(--gap-edge);
+  border-left: 7px solid var(--gap-edge);
+  border-radius: 0 5px 5px 0;
+  background: var(--gap-bg);
+  color: var(--gap-fg);
+  padding: 0.85rem 1.1rem 0.85rem 1.1rem;
+}
+blockquote.todo p:last-child { margin-bottom: 0; }
+blockquote > p:last-child { margin-bottom: 0; }
+
+strong.gap {
+  background: var(--gap-bg);
+  color: var(--gap-fg);
+  border-bottom: 2px solid var(--gap-edge);
+  padding: 0 0.22em;
+  border-radius: 2px;
+}
+blockquote.todo strong.gap { background: none; border-bottom: 0; padding: 0; }
+
+ul, ol { margin: 0 0 1rem; padding-left: 1.5rem; }
+li { margin: 0.3rem 0; }
+li > p:last-child { margin-bottom: 0; }
+ul.task-list { list-style: none; padding-left: 0.1rem; }
+ul.task-list li.task { display: flex; gap: 0.6rem; align-items: baseline; }
+ul.task-list input[type="checkbox"] { width: 0.95em; height: 0.95em; flex: none; }
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  padding: 0.1em 0.32em;
+  border-radius: 3px;
+  overflow-wrap: anywhere;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.9rem 1.05rem;
+  overflow-x: auto;
+  margin: 0 0 1.2rem;
+}
+pre code { background: none; padding: 0; font-size: 0.85rem; line-height: 1.5; }
+
+.table-wrap { overflow-x: auto; margin: 0 0 1.4rem; }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+th, td {
+  text-align: left;
+  padding: 0.42rem 0.7rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+thead th { background: var(--panel); border-bottom: 2px solid var(--rule); white-space: nowrap; }
+td.right, th.right { text-align: right; }
+td.center, th.center { text-align: center; }
+td.left, th.left { text-align: left; }
+
+.colophon {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1.2rem 1.25rem 3rem;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.colophon p { margin: 0 0 0.5rem; }
+
+@media print {
+  @page { margin: 18mm 16mm; }
+  :root {
+    --bg: #ffffff;
+    --fg: #000000;
+    --muted: #333333;
+    --rule: #999999;
+    --panel: #ffffff;
+    --accent: #000000;
+    --code-bg: #f2f2f2;
+    --quote-edge: #999999;
+    --gap-bg: #ffffff;
+    --gap-edge: #000000;
+    --gap-fg: #000000;
+  }
+  body { font-size: 10.5pt; line-height: 1.45; }
+  .doc, .colophon { max-width: none; padding: 0; }
+  h1, h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
+  table, pre, blockquote, .gaps { break-inside: avoid; page-break-inside: avoid; }
+  nav.toc { break-after: page; page-break-after: always; }
+  blockquote.todo { border-width: 1pt 1pt 1pt 4pt; }
+  strong.gap { border-bottom-width: 1pt; }
+  .colophon { border-top: 1px solid #999999; margin-top: 1.5rem; padding-top: 0.8rem; }
+  .doc a[href^="http"]::after,
+  .doc a[href^="mailto:"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    word-break: break-all;
+  }
+}
+</style>
+</head>
+<body>
+<article class="doc">
+{{ .TitleHTML }}
+{{ if .TODOs }}<p class="gaps"><strong>{{ .TODOs }}</strong> {{ if eq .TODOs 1 }}{{ .Chrome.GapsOne }}{{ else }}{{ .Chrome.GapsMany }}{{ end }} {{ .Chrome.GapsNote }}</p>
+{{ else }}<p class="gaps clear">{{ .Chrome.NoGaps }}</p>
+{{ end }}
+{{- if .Headings }}
+<nav class="toc" aria-labelledby="toc-heading">
+<h2 id="toc-heading">{{ .Chrome.Contents }}</h2>
+<ol>
+{{- range .Headings }}
+<li class="toc-{{ .Level }}"><a href="#{{ .ID }}">{{ .Text }}</a></li>
+{{- end }}
+</ol>
+</nav>
+{{ end }}
+{{ .Body }}
+</article>
+<footer class="colophon">
+<p>{{ .Chrome.From }} <code>{{ .SourceFile }}</code> {{ .Chrome.With }} Flugschreiber {{ .Version }}{{ if .Generated }} {{ .Chrome.On }} {{ .Generated }}{{ end }}. {{ .Chrome.SourceOfTruth }}</p>
+<p>{{ .Chrome.Disclaimer }}</p>
+</footer>
+</body>
+</html>

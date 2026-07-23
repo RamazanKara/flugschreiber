@@ -65,8 +65,10 @@ docker exec flugschreiber flugschreiber report \
   --organisation "Muster GmbH" --system-name "Support Assistant"
 ```
 
-You get three Markdown files: an Annex IV-shaped technical documentation
-skeleton, and an Article 50 transparency pack in German and English.
+You get an Annex IV-shaped technical documentation skeleton and an Article 50
+transparency pack in German and English, each as Markdown and as a
+self-contained HTML page with no external requests, suitable for emailing to
+someone who will open it offline.
 
 `--mock-upstream` runs a built-in fake model server so the quickstart needs no
 GPU and no network. For real traffic, drop it and pass `--upstream
@@ -167,13 +169,13 @@ It is not legal advice, and an LLM is not high-risk in itself. Obligations under
 the AI Act attach to the use case, not to the technology. Whether Annex III
 applies to your system is a determination you have to make.
 
-The hash chain proves the log is internally consistent, not who wrote it.
-Someone with write access to the whole evidence directory could recompute the
-chain from scratch and produce a log that verifies perfectly. Signed checkpoints
-(M2) narrow that to an attacker who also holds the signing key. Until then, put
-the directory on append-only storage and record the head hash somewhere the
-proxy cannot reach. This is in [SECURITY.md](SECURITY.md) too, with the rest of
-the threat model.
+The hash chain on its own proves the log is internally consistent, not who wrote
+it. Signed checkpoints close most of that gap: verification checks each
+signature *and* checks it against the chain, so rewriting the log without the
+signing key leaves behind checkpoints that are validly signed and disagree with
+the records they attest to. What remains is an attacker who holds the key, which
+by default lives on the same host as the evidence. That is the security
+boundary, and [SECURITY.md](SECURITY.md) says what to do about it.
 
 It only sees traffic that goes through it. If an application can reach your
 model server directly, Flugschreiber will not record it and will not know it
@@ -206,23 +208,32 @@ You can run both. They are not competing for the same slot.
 
 ## Kubernetes
 
-Helm chart, S3 backend and signed checkpoints land in M2. For now:
-
 ```bash
-kubectl create configmap flugschreiber --from-file=config.json
+helm install flugschreiber ./deploy/helm/flugschreiber \
+  --set config.upstream=http://vllm:8000 \
+  --set networkPolicy.modelServer.enabled=true
 ```
 
-Run it as a sidecar next to your application, or as a Deployment in front of
-your model server. It runs as UID 65532 on a read-only root filesystem with all
+The chart runs one replica by default and makes it hard to run more, because each
+replica owns its own hash chain and two sharing a volume would interleave records
+and break both. It ships a NetworkPolicy that permits ingress to your model
+server only from the proxy, which is what turns "we record our model calls" into
+a claim you can defend, and a CronJob that runs `verify` on a schedule against a
+read-only mount so a broken chain pages someone.
+
+Or run it directly. It runs as UID 65532 on a read-only root filesystem with all
 capabilities dropped:
 
 ```bash
-docker run -d --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+docker run -d --read-only --tmpfs /tmp \
+  --cap-drop=ALL --security-opt=no-new-privileges \
   -p 8080:8080 -v fs-evidence:/var/lib/flugschreiber \
   ghcr.io/flugschreiber/flugschreiber:latest serve --upstream http://vllm:8000
 ```
 
-The image is distroless static, 18 MB, with no shell and no package manager.
+The image is distroless static, 20 MB, with no shell and no package manager. It
+needs `--tmpfs /tmp` only so that `report` and `export` have somewhere to write;
+`serve` itself writes nothing outside the evidence volume.
 
 ## Configuration
 
@@ -239,6 +250,9 @@ Flags beat environment variables, which beat the config file. Everything has a
 | `--redact-patterns` | `FLUGSCHREIBER_REDACT_PATTERNS` | | `email`, `iban`, `credit_card`, `ipv4`, `phone`, or `label=regexp` |
 | `--retention-days` | `FLUGSCHREIBER_RETENTION_DAYS` | `180` | Minimum retention, floor of 180 |
 | `--tls-cert`, `--tls-key` | `FLUGSCHREIBER_TLS_CERT_FILE`, `..._KEY_FILE` | | Serve TLS |
+| `--events-token` | `FLUGSCHREIBER_EVENTS_TOKEN` | | Enables the oversight events endpoint; it stays off while empty |
+| `--no-sign` | `FLUGSCHREIBER_SIGNING_DISABLED` | `false` | Stop signing checkpoints |
+| `--checkpoint-interval` | | `5m` | How often to sign the chain head |
 | `--organisation`, `--system-name`, `--purpose`, `--contact` | `FLUGSCHREIBER_ORGANISATION`, … | | Pre-fill the generated documentation |
 
 The proxy refuses to start with retention under 180 days. Article 19 expects at
@@ -270,6 +284,7 @@ critical path.
 
 ## Documentation
 
+- [docs/tamper-evident-llm-audit-logs-on-kubernetes.md](docs/tamper-evident-llm-audit-logs-on-kubernetes.md) is the Kubernetes guide
 - [MAPPING.md](MAPPING.md) maps every schema field to the provision it supports (Articles 12, 19, 26, 50) and says where the support runs out
 - [docs/SCHEMA.md](docs/SCHEMA.md) is the log format and the compatibility policy
 - [DECISIONS.md](DECISIONS.md) is why things are the way they are
@@ -313,14 +328,59 @@ agg --cols 92 --rows 30 --font-size 16 --speed 1.0 demo.cast docs/demo.gif
 `scripts/demo.sh` is the exact sequence in the GIF, and `DEMO_SPEED=0` runs it
 without the typing pauses.
 
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `serve` | Run the recording proxy |
+| `verify` | Check chain integrity and checkpoint signatures, offline |
+| `report` | Generate the Annex IV skeleton and Article 50 packs, Markdown and HTML |
+| `export` | Package the evidence for a third party, without the signing key |
+| `inspect` | Reconstruct a session, including the human decisions around it |
+| `coverage` | Report what was captured, at what fidelity, and where the log is quiet |
+| `retention` | Report on retention, enforce it, or place a legal hold |
+
+Two are worth calling out.
+
+`export` produces a tarball containing the segments, the signed checkpoints, the
+public key, a manifest of SHA-256 digests, and a `VERIFY.md` written for someone
+who has never heard of this tool. It refuses to include the signing key or the
+client salt, so a recipient can verify everything and reverse nothing.
+
+`retention` will not delete anything without two flags. `--enforce` prints the
+plan; `--enforce --confirm` carries it out. It removes whole segments only,
+oldest first, and only when every record in them is beyond retention. A
+`LEGAL_HOLD` file blocks it entirely. Afterwards the log reports itself as
+*pruned*, never as intact from the beginning, because those are different claims
+and only one is true.
+
+## Recording human oversight
+
+Article 14 asks for oversight that works in practice. Proving that later needs a
+record of what a person actually did, in the same tamper-evident log as the
+interaction they did it about.
+
+```bash
+curl $BASE/flugschreiber/v1/events -H "Authorization: Bearer $TOKEN" \
+  -d '{"event_type":"human_intervention","ref_request_id":"ce71fbc9...",
+       "actor":"alice@muster.example","decision":"override",
+       "note":"Model advised refusing. Agent approved the refund under policy 4.2."}'
+```
+
+The endpoint returns 404 until you set `--events-token`, because an
+unauthenticated writer to an evidence log lets anyone forge an oversight record,
+and the chain would make the forgery look authoritative. It also refuses
+`event_type: inference`: callers may describe what a human did, never what a
+model did.
+
 ## Status
 
-M1 is complete: proxy with streaming capture, hash-chained local store,
-`verify`, `report`, mock upstream, Docker quickstart.
+M1, M2 and M3 are complete.
 
-M2 is Helm chart, S3 backend, Ed25519-signed checkpoints, metrics, HTML render.
-M3 is retention enforcement and legal hold, `export` bundles, the
-human-intervention endpoint, and `coverage`.
+Proxy with streaming capture, hash-chained store, Ed25519-signed checkpoints,
+S3 archival of sealed segments, retention with legal hold, `verify`, `report` in
+Markdown and HTML, `export`, `inspect`, `coverage`, the oversight events
+endpoint, Prometheus metrics, a Helm chart, and the Docker quickstart.
 
 Issues and pull requests welcome, particularly from anyone who has been through
 an actual audit and can tell us what a regulator asked for.

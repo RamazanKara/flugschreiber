@@ -46,18 +46,31 @@ have to be recorded elsewhere.
 | Mechanism | What it does | Caveat |
 | --- | --- | --- |
 | Append-only JSONL segments | Records are only ever appended; nothing rewrites a written line | Enforced by the writer, not by the filesystem. Use append-only or object-lock storage if you need this enforced below the application. |
-| `prev_hash` / `record_hash` | SHA-256 chain over every record | Detects modification, insertion and deletion. Does **not** prove authorship; see below. |
-| `retention_days` configuration | Refuses to start below a 180-day floor | M1 records the policy. It does not yet delete anything at expiry; that is M3. Deletion is your operational responsibility today. |
+| `prev_hash` / `record_hash` | SHA-256 chain over every record | Detects modification, insertion and deletion. Does **not** prove authorship on its own; see below. |
+| `checkpoints.jsonl` | Ed25519-signed attestations of the chain head, written on rotation, on a timer and at shutdown | Only as strong as the custody of `signing-key.pem`. A key stored beside the evidence protects against much less than a key stored elsewhere. |
+| `public-key.pem` | Lets any third party check those signatures | Standard PKIX, readable with openssl. Always included in an export. |
+| `retention_days` with a 180-day floor | Refuses to start below six months, and enforces deletion on request | Deletion removes whole segments only, oldest first, and only when every record in them is beyond retention. |
+| `pruned.json` | Records what retention deleted and where the surviving chain begins | A pruned log verifies as *pruned*, never as intact from the beginning. |
+| `LEGAL_HOLD` | Blocks all deletion while present | Checked at enforcement time, not cached. Its contents are the stated reason. |
 | Segment rotation | Bounded files, chain continues across boundaries | |
+| S3 archival of sealed segments | Ships rotated segments to object storage, with optional Object Lock | Archival, not the write path. S3 cannot append, so the local segment is always primary. |
 
 Where this runs out, and this is the one to read carefully. The hash chain proves the log
-is internally consistent. It does not prove who wrote it. Someone with write
-access to the entire evidence directory could recompute the whole chain from
-scratch and produce a log that verifies perfectly. Defending against that needs
-either signed checkpoints (M2) or storage the writer cannot retroactively alter
-(object lock, WORM, append-only replication). Until then, the chain's guarantee
-is: *nobody edited this log without rewriting all of it*. That is a real
-guarantee and a limited one, and the generated documentation says so.
+is internally consistent. On its own it does not prove who wrote it: someone with
+write access to the entire evidence directory could recompute the whole chain
+from scratch and produce a log that verifies perfectly.
+
+Signed checkpoints narrow that considerably. An attacker who rewrites the log
+but does not hold the signing key cannot produce checkpoints whose signatures
+verify *and* whose recorded head hashes match the rewritten chain. Verification
+checks both, and a checkpoint that is validly signed but disagrees with the chain
+is reported as a high-severity problem, because that combination is the signature
+of a rewrite.
+
+What remains: an attacker who holds the signing key can forge everything. So the
+key's custody is the security boundary. Keep it off the host that holds the
+evidence where you can, put segments on object-lock storage, and record the chain
+head somewhere the proxy cannot reach. `SECURITY.md` has the rest.
 
 ---
 

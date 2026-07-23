@@ -1,0 +1,52 @@
+# Values for a chart that depends on this one and only wants the sidecar
+# templates. Everything under the `flugschreiber` key belongs to the subchart.
+#
+# In your Chart.yaml:
+#
+#   dependencies:
+#     - name: flugschreiber
+#       version: 0.1.x
+#       repository: https://flugschreiber.github.io/charts
+#
+# In your Deployment or StatefulSet template:
+#
+#   {{- $fs := .Subcharts.flugschreiber }}
+#   spec:
+#     template:
+#       spec:
+#         containers:
+#           - name: app
+#             image: your-app:latest
+#             env:
+#               {{- include "flugschreiber.sidecar.appEnv" $fs | nindent 14 }}
+#           {{- include "flugschreiber.sidecar.container" $fs | nindent 10 }}
+#
+# The volume named by sidecar.volumeName is yours to declare. Use a
+# volumeClaimTemplate on a StatefulSet so that each replica keeps its own chain
+# across restarts.
+
+flugschreiber:
+  # No Deployment, Service, claim or policy. Only the named templates.
+  mode: sidecar
+
+  config:
+    upstream: http://vllm.models.svc.cluster.local:8000
+    contentMode: hash
+    retentionDays: 365
+    deployment:
+      organisation: Muster GmbH
+      systemName: Support Assistant
+
+  sidecar:
+    # Loopback, so the recorder is reachable only from inside the pod.
+    listen: 127.0.0.1:8080
+    volumeName: evidence
+    # Requires Kubernetes 1.29 or later. The container goes in initContainers.
+    nativeSidecar: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      memory: 256Mi

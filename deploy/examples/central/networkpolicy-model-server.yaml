@@ -1,0 +1,40 @@
+# The file that matters.
+#
+# Everything else in this directory produces a log. This is what makes the log
+# evidence, because it is the difference between "every call we know about went
+# through the proxy" and "every call went through the proxy".
+#
+# Without it, an application that still has the old base URL in a ConfigMap
+# reaches the model server directly, is not recorded, and nothing anywhere
+# reports that it happened. Coverage is a network property, not a proxy
+# feature.
+#
+# Apply it in the namespace the model server runs in, and check that your CNI
+# actually enforces NetworkPolicy. Several do not by default, and a policy that
+# is not enforced is worse than no policy, because you will believe it. Test it
+# by curling the model server from an unrelated pod and watching it fail.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vllm-ingress-only-from-flugschreiber
+spec:
+  podSelector:
+    matchLabels:
+      app: vllm
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Namespace and pod selector together, so this still works when the
+        # model server and the proxy are in different namespaces. Set the
+        # namespace label to wherever Flugschreiber runs.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ai
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: flugschreiber
+              app.kubernetes.io/component: proxy
+      ports:
+        - protocol: TCP
+          port: 8000

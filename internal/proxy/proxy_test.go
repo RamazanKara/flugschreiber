@@ -91,7 +91,7 @@ func (h *harness) postAndDrain(path, body string, headers map[string]string) str
 // The record for a request is appended after the response body has been fully
 // relayed, which is after the client's read returns. Closing the test server
 // first waits for outstanding handlers, so the log is complete before it is
-// read — no sleeps, no flakes.
+// read. No sleeps, no flakes.
 func (h *harness) events() []evidence.Event {
 	h.t.Helper()
 	h.proxy.Close()

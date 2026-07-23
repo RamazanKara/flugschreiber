@@ -10,7 +10,7 @@ import (
 	"github.com/flugschreiber/flugschreiber/internal/version"
 )
 
-const usage = `flugschreiber — audit and evidence layer for self-hosted LLM serving
+const usage = `flugschreiber: audit and evidence layer for self-hosted LLM serving
 
 Usage:
   flugschreiber <command> [flags]
@@ -19,6 +19,10 @@ Commands:
   serve     Run the recording proxy in front of an OpenAI-compatible endpoint
   verify    Check the integrity of an evidence directory (no server needed)
   report    Generate technical documentation and transparency artifacts
+  export    Package the evidence as a bundle a third party can verify
+  inspect   Reconstruct a session or request in readable form
+  coverage  Report what was captured and at what fidelity
+  retention Report on retention, enforce it, or place a legal hold
   version   Print build information
 
 Run "flugschreiber <command> -h" for the flags of a command.
@@ -42,6 +46,14 @@ func Main(args []string) int {
 		err = Verify(args[1:])
 	case "report":
 		err = Report(args[1:])
+	case "coverage":
+		err = Coverage(args[1:])
+	case "inspect":
+		err = Inspect(args[1:])
+	case "export":
+		err = Export(args[1:])
+	case "retention":
+		err = Retention(args[1:])
 	case "version":
 		PrintVersion()
 		return 0

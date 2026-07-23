@@ -2,6 +2,7 @@ VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo d
 COMMIT     ?= $(shell git rev-parse HEAD 2>/dev/null)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 IMAGE      ?= flugschreiber
+CHART      ?= deploy/helm/flugschreiber
 PKG        := github.com/flugschreiber/flugschreiber/internal/version
 
 LDFLAGS := -s -w \
@@ -59,6 +60,20 @@ vet: ## Run go vet
 
 .PHONY: check
 check: fmt vet test ## Format, vet and test
+
+.PHONY: helm
+helm: ## Lint, render and schema check the Helm chart. Needs no cluster
+	./deploy/helm/check.sh $(CHART)
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart only
+	helm lint $(CHART) --set config.upstream=http://vllm.models.svc:8000
+
+.PHONY: helm-template
+helm-template: ## Render the chart with the production example values
+	helm template flugschreiber $(CHART) \
+	  -f deploy/examples/values/central-production.yaml \
+	  --api-versions monitoring.coreos.com/v1
 
 .PHONY: image
 image: ## Build the container image

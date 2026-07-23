@@ -24,6 +24,10 @@ from the traffic that was actually observed:
   transparency-article-50-en.md     Article 50 transparency pack, English
   transparency-article-50-de.md     Article 50 transparency pack, German
 
+Each of those is also written as a standalone HTML page under the same name
+with a .html extension, for reading and printing without a Markdown tool. The
+Markdown is the source of truth; the pages carry no additional content.
+
 Sections that can be filled in from evidence and configuration are filled in.
 Everything else is marked TODO with one sentence on what belongs there. The
 output is documentation input, not a compliance statement.
@@ -125,17 +129,16 @@ Flags:
 	if summary.ChainVerified {
 		fmt.Printf("  evidence chain    intact (%d records, %s)\n", summary.Records, summary.Window())
 	} else {
-		fmt.Printf("  evidence chain    FAILED VERIFICATION — see section 3.4 of the technical documentation\n")
+		fmt.Printf("  evidence chain    FAILED VERIFICATION, see section 3.4 of the technical documentation\n")
 	}
 	if summary.Observed() {
 		fmt.Printf("  models observed   %s\n", modelList(summary))
 		fmt.Printf("  content mode      %s\n", contentMode)
 	} else {
-		fmt.Printf("  no inference traffic recorded — most sections are marked TODO\n")
+		fmt.Printf("  no inference traffic recorded, so most sections are marked TODO\n")
 	}
 
-	todos := countTODOs(generated)
-	fmt.Printf("\n%d section(s) need a human. They are marked TODO with a note on what belongs there.\n", todos)
+	fmt.Printf("\n%d section(s) need a human. They are marked TODO with a note on what belongs there.\n", generated.TODOs())
 	fmt.Printf("These artifacts are documentation inputs. They do not make anyone compliant.\n")
 	return nil
 }
@@ -158,12 +161,4 @@ func modelList(s *report.Summary) string {
 		return "none"
 	}
 	return strings.Join(out, ", ")
-}
-
-func countTODOs(g *report.Generated) int {
-	n := 0
-	for _, a := range g.Artifacts {
-		n += strings.Count(string(a.Content), "**TODO:**")
-	}
-	return n
 }

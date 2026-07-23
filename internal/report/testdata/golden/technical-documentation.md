@@ -45,7 +45,7 @@ callers and reported as served by the upstream:
 | `llama-3.1-8b-instruct` | `llama-3.1-8b-instruct` | 2 | 1 | 0 | 390 | 404 |
 | `bge-m3` | `bge-m3` | 1 | 0 | 0 | 96 | 0 |
 | `llama-3.1-8b-instruct` | `llama-3.1-8b-instruct-awq` | 1 | 0 | 0 | 340 | 28 |
-| `mistral-7b` | `—` | 1 | 0 | 1 | 0 | 0 |
+| `mistral-7b` | `n/a` | 1 | 0 | 1 | 0 | 0 |
 
 In at least one case the served identifier differs from the requested one: the upstream
 substituted a model. That substitution belongs in this document, with the reason for it.

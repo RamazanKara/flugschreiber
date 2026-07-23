@@ -1,0 +1,117 @@
+# One recorder per application pod.
+#
+# A StatefulSet rather than a Deployment, and that is the whole point of the
+# example. Each replica owns its own chain, so each replica needs its own
+# volume, and volumeClaimTemplates is the only built-in way to get one claim
+# per pod. With a Deployment you would either share one claim between replicas,
+# which breaks the chain, or use an emptyDir, which deletes the evidence when
+# the pod restarts.
+#
+# The recorder is an init container with restartPolicy: Always, a native
+# sidecar (Kubernetes 1.29 or later). That makes it start before the
+# application and stop after it, so the recorder is running for the whole life
+# of the thing it is recording. On older clusters, move it into `containers`
+# and drop the restartPolicy, and accept that the application may briefly be up
+# before the recorder is.
+#
+# What this arrangement cannot do: prove it was not bypassed. A NetworkPolicy
+# selects pods, and the recorder shares the application's pod and its IP, so no
+# rule can allow the recorder while denying the application beside it. The
+# application can dial the model server directly and nothing will report that
+# it did. What you get is a faithful record of what the application chose to
+# send through the recorder.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: support-assistant
+  labels:
+    app.kubernetes.io/name: support-assistant
+spec:
+  serviceName: support-assistant
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: support-assistant
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: support-assistant
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: flugschreiber
+          image: ghcr.io/flugschreiber/flugschreiber:0.1.0
+          # Native sidecar. Remove this line and move the container into
+          # `containers` on Kubernetes older than 1.29.
+          restartPolicy: Always
+          args: ["serve"]
+          env:
+            # 127.0.0.1, so the recorder is reachable only from inside this
+            # pod and never from the rest of the cluster.
+            - name: FLUGSCHREIBER_LISTEN
+              value: 127.0.0.1:8080
+            - name: FLUGSCHREIBER_UPSTREAM
+              value: http://vllm.ai.svc.cluster.local:8000
+            - name: FLUGSCHREIBER_DATA_DIR
+              value: /var/lib/flugschreiber
+            - name: FLUGSCHREIBER_CONTENT_MODE
+              value: hash
+            - name: FLUGSCHREIBER_RETENTION_DAYS
+              value: "365"
+            - name: FLUGSCHREIBER_SYSTEM_NAME
+              value: Support Assistant
+          # No port name: names are unique across the pod, and the application
+          # container beside this one usually has a port called http.
+          #
+          # No httpGet probe: the kubelet probes the pod IP from outside the
+          # pod, this listener is on loopback on purpose, so every probe would
+          # be refused and the container would restart forever. There is no
+          # shell in the image for an exec probe. A recorder that cannot bind
+          # exits, which is what the pod sees.
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: evidence
+              mountPath: /var/lib/flugschreiber
+      containers:
+        - name: app
+          image: your-app:latest
+          env:
+            # The only application change. Two environment variables, no SDK.
+            - name: OPENAI_BASE_URL
+              value: http://127.0.0.1:8080/v1
+            - name: OPENAI_API_BASE
+              value: http://127.0.0.1:8080/v1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+  volumeClaimTemplates:
+    - metadata:
+        name: evidence
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi

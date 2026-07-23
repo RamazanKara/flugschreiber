@@ -42,19 +42,23 @@ and all capabilities dropped.
 These are real limitations, stated plainly because a security document that only
 lists strengths is marketing.
 
-**An attacker with write access to the whole evidence directory.** The hash
-chain proves internal consistency, not authorship. Someone who can rewrite every
-segment can recompute the chain from scratch and produce a log that verifies
-perfectly. The guarantee today is *nobody edited this log without rewriting all
-of it*.
+**An attacker who holds the signing key.** The hash chain proves internal
+consistency, not authorship: someone who can rewrite every segment can recompute
+a chain that verifies. Signed checkpoints narrow that considerably. Verification
+checks each checkpoint's signature *and* checks it against the chain, so an
+attacker who rewrites the log without the key leaves behind checkpoints that are
+validly signed and disagree with the records they attest to. That is reported at
+high severity.
 
-Mitigations available now:
+What is left is an attacker who holds the key, and by default the key lives on
+the same host as the evidence. That is the security boundary. Reduce it:
+- keep `signing-key.pem` off the host that holds the evidence where you can
 - store segments on append-only or object-lock storage (S3 Object Lock, WORM)
-- replicate segments off-host as they are written
+- replicate sealed segments off-host as they rotate
 - record the chain head hash somewhere the proxy cannot reach, on a schedule
 
-Ed25519-signed checkpoints (M2) narrow this to an attacker who also holds the
-signing key. That is the right fix and it is not shipped yet.
+Running with `--no-sign` drops back to the chain-only property. That is a
+deliberate choice an operator can make, and it should be a considered one.
 
 **Traffic that does not pass through the proxy.** If an application can reach
 the model server directly, Flugschreiber will not record it and will not know it
@@ -65,6 +69,16 @@ make the proxy the only route.
 self-reported by the upstream and are not independently verified. A model server
 that lies about which model it ran produces a log that faithfully records the
 lie.
+
+**Deletion under retention.** `flugschreiber retention --enforce --confirm`
+deletes whole segments. It writes and fsyncs `pruned.json` before unlinking
+anything, so a crash mid-deletion leaves an anchor ahead of the log rather than a
+log nobody can verify. Verification tells an interrupted prune apart from a
+wholesale replacement by cross-checking the record the anchor attests to. A
+`LEGAL_HOLD` file blocks deletion entirely while it exists.
+
+A pruned log reports itself as pruned, never as intact from the beginning. Those
+are different claims and only one of them is true after a prune.
 
 **Loss of the last records on machine failure.** Each record is flushed to the
 operating system immediately, so a process crash loses nothing already written.
@@ -85,7 +99,7 @@ ordering; the chain is unaffected.
 | Client to proxy | Client credentials pass through unmodified. Terminate TLS at or before the proxy. |
 | Proxy to upstream | The proxy may inject a configured API key when the client sent none. That key is read from config or environment and never logged. |
 | Proxy to evidence directory | The proxy needs write access. Nothing else should have it. |
-| Evidence directory to auditor | An exported bundle contains segments and, from M2, checkpoints and the public key. It never contains the client salt or any credential. |
+| Evidence directory to auditor | An exported bundle contains segments, checkpoints and the public key. It never contains the signing key, the client salt, or any credential. |
 
 ## Supply chain
 
@@ -111,4 +125,6 @@ cosign verify ghcr.io/flugschreiber/flugschreiber:VERSION \
 - [ ] Make the proxy the only network route to the model server
 - [ ] Terminate TLS at or before the proxy; do not send prompts over plaintext
 - [ ] Record the chain head hash off-host on a schedule
+- [ ] Keep the signing key off the host that holds the evidence, if you can
+- [ ] Place a LEGAL_HOLD file before any deletion that must not happen
 - [ ] Decide the content mode deliberately, and document why

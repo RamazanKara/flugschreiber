@@ -1,0 +1,20 @@
+{{- if eq .Values.mode "central" }}
+{{- if .Values.config.file.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  # No credential appears here. The upstream API key and any object storage
+  # credentials arrive through the environment from a Secret, because a
+  # ConfigMap is readable by anyone with get on the namespace.
+  config.json: |
+    {{- include "flugschreiber.configJSON" . | nindent 4 }}
+{{- end }}
+{{- end }}

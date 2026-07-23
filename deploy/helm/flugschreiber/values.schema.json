@@ -1,0 +1,431 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Flugschreiber chart values",
+  "description": "Constraints that are cheaper to hit at helm install than at pod start. The retention floor is the important one: the binary refuses to start below 180 days, and a rejected install is much kinder than a CrashLoopBackOff.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "image", "replicas", "config", "persistence", "verify"],
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Injected by Helm when this chart is used as a dependency."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["central", "sidecar"],
+      "description": "central renders the Deployment and everything around it. sidecar renders nothing and exposes only the named templates."
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "commonLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+    "commonAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$",
+          "description": "Empty, or a full sha256 digest."
+        },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "pullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "type": "string" } }
+          }
+        }
+      }
+    },
+
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Must be 1. Each pod owns one hash chain and one evidence directory, so a second writer breaks the chain on the first concurrent append. The template rejects anything else with the full explanation."
+    },
+
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listen", "dataDir", "contentMode", "retentionDays"],
+      "properties": {
+        "listen": {
+          "type": "string",
+          "pattern": "^[^:]*:[0-9]{1,5}$",
+          "description": "host:port or :port. The port is read back out to set the container port, the probes and the policies."
+        },
+        "upstream": {
+          "type": "string",
+          "pattern": "^$|^https?://.+",
+          "description": "Required unless mockUpstream is true. Must be an http or https URL, which is what the binary itself enforces."
+        },
+        "mockUpstream": { "type": "boolean" },
+        "dataDir": { "type": "string", "pattern": "^/.+" },
+        "contentMode": {
+          "type": "string",
+          "enum": ["store", "hash", "redact"],
+          "description": "hash keeps digests and no text. store keeps prompts and completions verbatim, with everything that follows from holding personal data."
+        },
+        "redactPatterns": { "type": "array", "items": { "type": "string" } },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 180,
+          "description": "Hard floor of 180 days. Article 19 expects at least six months of automatically generated logs where they are under the provider's control, and the binary refuses to start below it. Configure more if you need more; the floor is not adjustable from here."
+        },
+        "segmentMaxBytes": { "type": "integer", "minimum": 0 },
+        "checkpointInterval": {
+          "type": "string",
+          "pattern": "^$|^[0-9]+(ns|us|ms|s|m|h)$",
+          "description": "How often the chain head is signed while the log is written to. Empty uses the binary's five minute default. The interval is the size of the window someone holding the volume but not the signing key can rewrite without breaking a signature."
+        },
+        "signingDisabled": {
+          "type": "boolean",
+          "description": "False keeps checkpoint signing on, which is what makes the log resist a rewrite by whoever can write to the evidence volume. True leaves the hash chain, which detects any edit that is not a rewrite of everything after it, and that rewrite is precisely what such a person can do."
+        },
+        "logLevel": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
+        "requestTimeout": { "type": "string", "pattern": "^$|^[0-9]+(ns|us|ms|s|m|h)$" },
+        "shutdownTimeout": { "type": "string", "pattern": "^$|^[0-9]+(ns|us|ms|s|m|h)$" },
+        "deployment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "organisation": { "type": "string" },
+            "systemName": { "type": "string" },
+            "purpose": { "type": "string" },
+            "contact": { "type": "string" },
+            "role": { "type": "string", "enum": ["provider", "deployer"] },
+            "environment": { "type": "string" }
+          }
+        },
+        "file": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "mountPath": { "type": "string", "pattern": "^/.+" }
+          }
+        }
+      }
+    },
+
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "existingSecret": { "type": "string" },
+        "upstreamApiKey": { "type": "string" },
+        "eventsToken": {
+          "type": "string",
+          "description": "Bearer token for the human oversight events endpoint, which appends to the evidence chain. Empty leaves the endpoint returning 404. It lives here and not under config because it is a credential, and the chart only ever passes it through a Secret."
+        },
+        "s3": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "accessKeyId": { "type": "string" },
+            "secretAccessKey": { "type": "string" },
+            "sessionToken": { "type": "string" }
+          }
+        },
+        "keys": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "pattern": "^[-._a-zA-Z0-9]+$" }
+        },
+        "s3EnvNames": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+        }
+      }
+    },
+
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "existingSecret": { "type": "string" },
+        "mountPath": { "type": "string", "pattern": "^/.+" }
+      }
+    },
+
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "existingClaim": { "type": "string" },
+        "storageClass": { "type": "string" },
+        "accessModes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["ReadWriteOnce", "ReadWriteOncePod", "ReadWriteMany", "ReadOnlyMany"] },
+          "description": "One writer by construction. ReadWriteMany does not make a second replica safe."
+        },
+        "size": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|K|M|G|T|P)?$" },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "keepOnUninstall": { "type": "boolean" }
+      }
+    },
+
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": { "type": "object" },
+        "limits": {
+          "type": "object",
+          "description": "No CPU limit by default. Every model call in the cluster passes through this process, so throttling it adds latency to all of them. Set one only if you have measured a reason to."
+        }
+      }
+    },
+
+    "podSecurityContext": {
+      "type": "object",
+      "properties": {
+        "runAsNonRoot": { "const": true, "description": "The image has no root user and nothing to run as root for." },
+        "runAsUser": { "type": "integer", "minimum": 1 },
+        "runAsGroup": { "type": "integer", "minimum": 1 },
+        "fsGroup": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "containerSecurityContext": {
+      "type": "object",
+      "properties": {
+        "allowPrivilegeEscalation": { "const": false },
+        "privileged": { "const": false },
+        "readOnlyRootFilesystem": {
+          "const": true,
+          "description": "The container is distroless static with no shell and no package manager, and the evidence volume is the only path that needs to be writable, so there is no case for turning this off."
+        }
+      }
+    },
+
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "automountServiceAccountToken": { "type": "boolean" }
+      }
+    },
+
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "nodePort": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+
+    "livenessProbe": { "$ref": "#/definitions/probe" },
+    "readinessProbe": { "$ref": "#/definitions/probe" },
+    "startupProbe": { "$ref": "#/definitions/probe" },
+
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 1 },
+    "extraArgs": { "type": "array", "items": { "type": "string" } },
+    "extraEnv": { "type": "array", "items": { "type": "object" } },
+    "extraEnvFrom": { "type": "array", "items": { "type": "object" } },
+    "extraVolumes": { "type": "array", "items": { "type": "object" } },
+    "extraVolumeMounts": { "type": "array", "items": { "type": "object" } },
+    "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+    "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+    "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+    "tolerations": { "type": "array", "items": { "type": "object" } },
+    "affinity": { "type": "object" },
+    "priorityClassName": { "type": "string" },
+    "dnsPolicy": { "type": "string" },
+    "dnsConfig": { "type": "object" },
+    "hostAliases": { "type": "array", "items": { "type": "object" } },
+
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": { "type": ["integer", "string", "null"] },
+        "maxUnavailable": { "type": ["integer", "string", "null"] },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "schedule"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schedule": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Standard five field cron expression, or a @every style shorthand."
+        },
+        "timeZone": { "type": "string" },
+        "json": { "type": "boolean" },
+        "restartPolicy": { "type": "string", "enum": ["Never", "OnFailure"] },
+        "backoffLimit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6,
+          "description": "Zero by default. verify is a deterministic function of the files on disk, so a retry cannot change a real answer, and a retry that passed after a failure would hide the failure. Raise it only if you see failures from volume attachment or image pulls rather than from the chain."
+        },
+        "concurrencyPolicy": { "type": "string", "enum": ["Allow", "Forbid", "Replace"] },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 10 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "failedJobsHistoryLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "At least one. A failed Job is the alert; deleting it immediately deletes the alert."
+        },
+        "successfulJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+        "suspend": { "type": "boolean" },
+        "resources": { "type": "object" },
+        "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "affinity": { "type": "object" },
+        "extraArgs": { "type": "array", "items": { "type": "string" } },
+        "extraEnv": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingressFrom": { "type": "array", "items": { "type": "object" } },
+        "extraIngressPorts": { "type": "array", "items": { "type": "object" } },
+        "monitoring": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "namespaceSelector": { "type": "object" },
+            "podSelector": { "type": "object" }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "dns": { "type": "boolean" },
+            "rules": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      }
+    },
+
+    "modelServer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The policy that makes coverage a property of the cluster instead of an assumption about how applications were configured.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "namespace": { "type": "string" },
+            "podSelector": { "type": "object" },
+            "ports": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["port"],
+                "properties": {
+                  "protocol": { "type": "string", "enum": ["TCP", "UDP", "SCTP"] },
+                  "port": { "type": ["integer", "string"] }
+                }
+              }
+            },
+            "additionalIngressFrom": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      }
+    },
+
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Sets FLUGSCHREIBER_METRICS_ENABLED, which decides whether the exposition is served on the proxy port. The counters are collected either way."
+        },
+        "path": {
+          "type": "string",
+          "const": "/metrics",
+          "description": "The proxy has no setting to move the exposition, so the only value that produces a monitor which scrapes anything is /metrics. It stays a value so the monitors have one place to read it from."
+        },
+        "serviceMonitor": { "$ref": "#/definitions/monitor" },
+        "podMonitor": { "$ref": "#/definitions/monitor" }
+      }
+    },
+
+    "sidecar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "type": "string",
+          "pattern": "^(127\\.0\\.0\\.1|localhost|\\[::1\\]):[0-9]{1,5}$",
+          "description": "Loopback only. A sidecar bound to 0.0.0.0 is reachable from anywhere the pod IP is, which is not what a per-pod recorder is for. All three forms are allowed and flugschreiber.sidecar.appEnv reads the host back out of this value, so the application dials whatever the recorder actually bound."
+        },
+        "containerName": { "type": "string", "minLength": 1 },
+        "volumeName": { "type": "string", "minLength": 1 },
+        "nativeSidecar": { "type": "boolean" }
+      }
+    }
+  },
+
+  "definitions": {
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "successThreshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "monitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "namespace": { "type": "string" },
+        "interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$" },
+        "scrapeTimeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "honorLabels": { "type": "boolean" },
+        "relabelings": { "type": "array", "items": { "type": "object" } },
+        "metricRelabelings": { "type": "array", "items": { "type": "object" } },
+        "skipCRDCheck": { "type": "boolean" }
+      }
+    }
+  }
+}
