@@ -256,6 +256,7 @@ func startServe(t *testing.T, bin string, args ...string) *exec.Cmd {
 	cmd := exec.Command(bin, append([]string{"serve"}, args...)...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
+	configureServe(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
@@ -273,8 +274,8 @@ func stopServe(t *testing.T, cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
 	}
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("signal serve: %v", err)
+	if err := interrupt(cmd); err != nil {
+		t.Fatalf("interrupt serve: %v", err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
