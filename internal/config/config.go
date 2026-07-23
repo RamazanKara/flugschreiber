@@ -80,6 +80,34 @@ type Config struct {
 	// want the counters without opening another route.
 	MetricsEnabled bool `json:"metrics_enabled"`
 
+	// Upstreams routes traffic to more than one model server from one instance,
+	// by model name and endpoint kind. It is an alternative to the single
+	// Upstream string above; setting both is an error. When it is used, one
+	// route must be marked default.
+	Upstreams []UpstreamRoute `json:"upstreams,omitempty"`
+
+	// Signer selects how checkpoints are signed. Empty means the built-in
+	// file-based Ed25519 key. "exec:/path/to/helper" delegates signing to an
+	// external process, which is how key custody moves off the host.
+	Signer string `json:"signer,omitempty"`
+
+	// RetentionMaxBytes caps the evidence directory size. Beyond-retention
+	// segments are deleted oldest-first until under it. It never overrides the
+	// retention floor: if the directory is over the cap but everything is
+	// within retention, enforcement refuses and says so. Zero disables it.
+	RetentionMaxBytes int64 `json:"retention_max_bytes,omitempty"`
+
+	// TSAURL is an RFC 3161 timestamping authority. When set, each checkpoint
+	// is anchored to a signed timestamp token, upgrading its time from a
+	// host-clock claim to third-party evidence. TSAInterval bounds how often.
+	TSAURL      string   `json:"tsa_url,omitempty"`
+	TSAInterval Duration `json:"tsa_interval,omitempty"`
+
+	// ContentEncryption encrypts stored content at rest so that an Article 17
+	// erasure can destroy the key rather than the chain. It only affects the
+	// store and redact modes; hash mode retains no text to encrypt.
+	ContentEncryption bool `json:"content_encryption,omitempty"`
+
 	// Archive ships sealed segments to a second location. It is archival and
 	// never the write path: object stores cannot append, so the local segment
 	// is always primary and only a rotated, closed segment is uploaded.
@@ -89,6 +117,26 @@ type Config struct {
 	// only to pre-fill the generated documentation; nothing here changes proxy
 	// behaviour.
 	Deployment Deployment `json:"deployment"`
+}
+
+// UpstreamRoute directs traffic by model name and endpoint kind to one model
+// server. It carries its own TLS settings so that servers behind different
+// certificate authorities can coexist in one instance.
+type UpstreamRoute struct {
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	APIKey  string `json:"api_key,omitempty"`
+	CAFile  string `json:"ca_file,omitempty"`
+	TLSSkip bool   `json:"tls_skip_verify,omitempty"`
+	Default bool   `json:"default,omitempty"`
+
+	// Models is a list of glob patterns matched against the requested model.
+	// Empty matches nothing unless the route is the default.
+	Models []string `json:"models,omitempty"`
+
+	// Endpoints restricts the route to endpoint kinds (chat, completion,
+	// embedding, responses). Empty matches every kind.
+	Endpoints []string `json:"endpoints,omitempty"`
 }
 
 // Archive backends.

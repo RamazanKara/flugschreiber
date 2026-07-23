@@ -23,6 +23,9 @@ Commands:
   inspect   Reconstruct a session or request in readable form
   coverage  Report what was captured and at what fidelity
   retention Report on retention, enforce it, or place a legal hold
+  keys      Show or rotate the checkpoint signing key
+  archive-verify  Check that the archive holds every sealed segment
+  erase     Destroy the stored content of a session (crypto-shredding)
   version   Print build information
 
 Run "flugschreiber <command> -h" for the flags of a command.
@@ -54,6 +57,12 @@ func Main(args []string) int {
 		err = Export(args[1:])
 	case "retention":
 		err = Retention(args[1:])
+	case "keys":
+		err = Keys(args[1:])
+	case "archive-verify":
+		err = ArchiveVerify(args[1:])
+	case "erase":
+		err = Erase(args[1:])
 	case "version":
 		PrintVersion()
 		return 0

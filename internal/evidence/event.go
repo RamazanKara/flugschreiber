@@ -22,7 +22,26 @@ const (
 	EventSessionEnd        = "session_end"
 	EventConfigChange      = "config_change"
 	EventSystemEvent       = "system_event"
+	EventIncident          = "incident"
 )
+
+// Incident severities, recordable through the oversight events endpoint. They
+// support Article 73 serious-incident reporting: an operator records what a
+// human concluded about an interaction, never what a model did.
+const (
+	SeveritySuspected = "suspected"
+	SeveritySerious   = "serious"
+	SeverityResolved  = "resolved"
+)
+
+// ValidSeverity reports whether s is a recognised incident severity.
+func ValidSeverity(s string) bool {
+	switch s {
+	case SeveritySuspected, SeveritySerious, SeverityResolved:
+		return true
+	}
+	return false
+}
 
 // Content capture modes.
 const (
@@ -49,12 +68,17 @@ type Event struct {
 	ModelServed    string `json:"model_served,omitempty"`
 	UpstreamRespID string `json:"upstream_response_id,omitempty"`
 
+	// UpstreamPreviousID carries the OpenAI Responses API previous_response_id,
+	// which is that API's own linkage between turns of one conversation.
+	UpstreamPreviousID string `json:"upstream_previous_id,omitempty"`
+
 	Params *Params `json:"params,omitempty"`
 	Usage  *Usage  `json:"usage,omitempty"`
 
-	Stream        bool       `json:"stream"`
-	FinishReasons []string   `json:"finish_reasons,omitempty"`
-	ToolCalls     []ToolCall `json:"tool_calls,omitempty"`
+	Stream        bool         `json:"stream"`
+	FinishReasons []string     `json:"finish_reasons,omitempty"`
+	ToolCalls     []ToolCall   `json:"tool_calls,omitempty"`
+	ToolResults   []ToolResult `json:"tool_results,omitempty"`
 
 	Status    int     `json:"status,omitempty"`
 	Error     string  `json:"error,omitempty"`
@@ -80,6 +104,9 @@ type Event struct {
 	// RefRequestID points at the inference record this event concerns, for
 	// events that comment on an interaction rather than being one.
 	RefRequestID string `json:"ref_request_id,omitempty"`
+
+	// Severity classifies an incident record. Empty on every other event type.
+	Severity string `json:"severity,omitempty"`
 }
 
 // Decisions a human_intervention may record.
@@ -109,7 +136,8 @@ func ValidDecision(d string) bool {
 func RecordableEventType(t string) bool {
 	switch t {
 	case EventHumanIntervention, EventSessionStart, EventSessionEnd,
-		EventConfigChange, EventToolCall, EventToolResult, EventSystemEvent:
+		EventConfigChange, EventToolCall, EventToolResult, EventSystemEvent,
+		EventIncident:
 		return true
 	}
 	return false
@@ -149,12 +177,37 @@ type ToolCall struct {
 	ArgumentsHash string `json:"arguments_sha256,omitempty"`
 }
 
+// ToolResult records what a tool returned, carried on the inference event
+// rather than as a separate chain event: chat clients resend the whole
+// conversation each turn, so a per-message event would duplicate one result
+// into the chain once per subsequent turn. Content follows the active content
+// mode; the digest and byte count are always over the result as it was seen.
+type ToolResult struct {
+	CallID  string `json:"call_id,omitempty"`
+	SHA256  string `json:"sha256"`
+	Bytes   int    `json:"bytes"`
+	Content string `json:"content,omitempty"`
+}
+
 // Content is the record of what was sent and received, at the fidelity the
 // configured content mode allows.
 type Content struct {
-	Mode   string   `json:"mode"`
-	Input  *Payload `json:"input,omitempty"`
-	Output *Payload `json:"output,omitempty"`
+	Mode       string             `json:"mode"`
+	Input      *Payload           `json:"input,omitempty"`
+	Output     *Payload           `json:"output,omitempty"`
+	Encryption *ContentEncryption `json:"encryption,omitempty"`
+}
+
+// ContentEncryption marks a record whose stored text is encrypted at rest, so
+// that an Article 17 erasure can destroy the wrapping key and render the
+// content unrecoverable without touching the chain. When Erased is true the
+// key is gone; the digests over the original wire bytes remain as claims that
+// can no longer be re-proven, which the documentation states plainly.
+type ContentEncryption struct {
+	Algorithm string `json:"algorithm"`
+	KeyID     string `json:"key_id"`
+	Erased    bool   `json:"erased,omitempty"`
+	ErasedAt  string `json:"erased_at,omitempty"`
 }
 
 // Payload describes one side of an interaction. SHA256 and Bytes are always
@@ -166,6 +219,11 @@ type Payload struct {
 
 	Messages []Message `json:"messages,omitempty"`
 	Text     string    `json:"text,omitempty"`
+
+	// Ciphertext holds base64(nonce || AES-GCM ciphertext) when content
+	// encryption is on. Text and Messages are then empty; erasing the wrapping
+	// key leaves this present but permanently undecryptable.
+	Ciphertext string `json:"ciphertext,omitempty"`
 
 	Truncated  bool           `json:"truncated,omitempty"`
 	Redactions map[string]int `json:"redactions,omitempty"`
