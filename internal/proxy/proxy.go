@@ -42,10 +42,16 @@ type Server struct {
 	cfg      config.Config
 	store    *evidence.Store
 	capturer *content.Capturer
-	salt     []byte
-	router   *router
-	log      *slog.Logger
-	metrics  *metrics.Metrics
+
+	// encryptor seals stored content before the append, and is nil unless
+	// content encryption is configured. Hash mode never has one: there is no
+	// text at rest to encrypt.
+	encryptor *content.Encryptor
+
+	salt    []byte
+	router  *router
+	log     *slog.Logger
+	metrics *metrics.Metrics
 
 	// collect refreshes gauges the proxy cannot observe from a request, such as
 	// the size of the evidence directory. It runs at scrape time so a gauge is
@@ -98,12 +104,36 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 		return nil, err
 	}
 
+	// The keystore is opened here rather than lazily on the first record,
+	// because a keystore that cannot be created is a configuration the operator
+	// has to fix before any traffic arrives, not a surprise on the first
+	// request that carries a prompt.
+	var encryptor *content.Encryptor
+	if cfg.ContentEncryption && cfg.ContentMode == evidence.ModeHash {
+		// Silently doing nothing here would leave an operator believing content
+		// is protected when there is no content. Saying so is cheap; the
+		// combination is a misunderstanding, not a misconfiguration, so it is a
+		// warning rather than a refusal.
+		log.Warn("content encryption has no effect in hash mode, which retains no text to encrypt")
+	}
+	if cfg.ContentEncryption && cfg.ContentMode != evidence.ModeHash {
+		keys, keyErr := evidence.OpenContentKeystore(evidence.ContentKeystorePath(cfg.DataDir))
+		if keyErr != nil {
+			return nil, keyErr
+		}
+		encryptor = content.NewEncryptor(keys)
+		log.Info("stored content is encrypted at rest",
+			slog.String("keystore", keys.Path()),
+			slog.String("master_key_id", keys.MasterKeyID()))
+	}
+
 	s := &Server{
-		cfg:      cfg,
-		store:    store,
-		capturer: &content.Capturer{Mode: cfg.ContentMode, Redactor: redactor},
-		salt:     salt,
-		log:      log,
+		cfg:       cfg,
+		store:     store,
+		capturer:  &content.Capturer{Mode: cfg.ContentMode, Redactor: redactor},
+		encryptor: encryptor,
+		salt:      salt,
+		log:       log,
 		metrics: metrics.New(metrics.BuildInfo{
 			Version:     version.Version,
 			Commit:      version.Commit,
@@ -421,6 +451,23 @@ func (s *Server) finish(c *capture, resp *http.Response, streamErr error) {
 		Mode:   s.cfg.ContentMode,
 		Input:  input,
 		Output: output,
+	}
+
+	// Encryption has to happen here, between capture and the append, because
+	// the chain hashes the record as written and nothing afterwards may rewrite
+	// it. EncryptEvent fails closed: on any error the text is gone from the
+	// event anyway, so the record is still worth appending and appending it is
+	// still the right thing to do. Losing the record would cost the evidence
+	// that the interaction happened at all, which is strictly worse than losing
+	// the ability to read its content.
+	if s.encryptor != nil {
+		if err := s.encryptor.EncryptEvent(ev); err != nil {
+			s.captureErrors.Add(1)
+			s.metrics.CaptureError(metrics.CaptureErrorEncryptFailed)
+			s.log.Error("could not encrypt stored content; the record is appended without it",
+				slog.String("request_id", c.requestID),
+				slog.String("error", err.Error()))
+		}
 	}
 
 	s.metrics.ObserveRequest(metrics.RequestObservation{

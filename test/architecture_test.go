@@ -27,7 +27,8 @@ var allowedImports = map[string][]string{
 	// The domain sits on evidence and nothing else sideways.
 	"internal/content": {"internal/evidence"},
 	"internal/openai":  {"internal/evidence"},
-	"internal/audit":   {"internal/evidence"},
+	"internal/audit":   {"internal/content", "internal/evidence"},
+	"internal/custody": {"internal/evidence"},
 	"internal/config":  {"internal/content", "internal/evidence"},
 	"internal/report":  {"internal/config", "internal/evidence"},
 
@@ -38,8 +39,9 @@ var allowedImports = map[string][]string{
 	},
 	"internal/cli": {
 		"internal/archive", "internal/audit", "internal/config",
-		"internal/evidence", "internal/metrics", "internal/mockupstream",
-		"internal/pdf", "internal/proxy", "internal/report", "internal/version",
+		"internal/custody", "internal/evidence", "internal/metrics",
+		"internal/mockupstream", "internal/pdf", "internal/proxy",
+		"internal/report", "internal/version",
 	},
 }
 
@@ -89,4 +91,40 @@ func TestDependencyGraphMatchesArchitecture(t *testing.T) {
 		}
 	}
 
+}
+
+// outwardFacing is the standard-library machinery a foundation package must not
+// reach, directly or through anything it imports.
+var outwardFacing = []string{"net/http", "os/exec", "net/rpc", "net/smtp", "os/user", "plugin"}
+
+// TestFoundationsHoldNoOutwardFacingMachinery is the invariant behind the
+// dependency map rather than a restatement of it.
+//
+// internal/evidence is what somebody reads to satisfy themselves that a chain
+// is intact, possibly years from now and possibly on a machine with no network
+// at all. That reading is only as easy as the package's closure is small, and a
+// closure is easy to grow by accident: one convenience call to an HTTP
+// timestamping authority or a subprocess signing helper, and the package that
+// was meant to be readable on its own now drags in a TLS stack. Both of those
+// really were proposed; both now live in internal/custody behind an interface,
+// which is what this test exists to keep true.
+//
+// internal/archive is the mirror image. It speaks HTTP by design and must not
+// know what evidence is, which the dependency map already checks.
+func TestFoundationsHoldNoOutwardFacingMachinery(t *testing.T) {
+	out, err := exec.Command("go", "list", "-deps", "../internal/evidence").Output()
+	if err != nil {
+		t.Fatalf("go list -deps: %v", err)
+	}
+
+	closure := map[string]bool{}
+	for _, line := range strings.Fields(string(out)) {
+		closure[line] = true
+	}
+	for _, pkg := range outwardFacing {
+		if closure[pkg] {
+			t.Errorf("internal/evidence reaches %s. Anything that talks to another process or another host "+
+				"belongs in internal/custody, behind an interface evidence declares", pkg)
+		}
+	}
 }

@@ -110,6 +110,11 @@ func buildFixture(t *testing.T) string {
 		Actor: "alice@muster.example", Decision: evidence.DecisionOverride,
 		RefRequestID: "req-3", Note: "Refund issued by hand under policy 4.2.",
 	})
+	events = append(events, &evidence.Event{
+		EventType: evidence.EventIncident, RequestID: "inc-1", SessionID: "sess-b",
+		Actor: "dpo@muster.example", Severity: evidence.SeveritySerious,
+		RefRequestID: "req-3", Note: "Model produced defamatory output about a named individual.",
+	})
 
 	for _, e := range events {
 		if err := store.Append(e); err != nil {
@@ -321,8 +326,11 @@ func TestSummariseAggregatesTraffic(t *testing.T) {
 	if !s.ChainVerified {
 		t.Errorf("fixture chain did not verify: %v", s.ChainProblems)
 	}
-	if s.Records != 6 || s.Inference != 5 {
-		t.Errorf("Records/Inference = %d/%d, want 6/5", s.Records, s.Inference)
+	if s.Records != 7 || s.Inference != 5 {
+		t.Errorf("Records/Inference = %d/%d, want 7/5", s.Records, s.Inference)
+	}
+	if s.Incidents != 1 || len(s.BySeverity) != 1 || s.BySeverity[0].Name != evidence.SeveritySerious {
+		t.Errorf("incidents = %d, BySeverity = %+v, want one serious", s.Incidents, s.BySeverity)
 	}
 	if s.Interventions != 1 {
 		t.Errorf("Interventions = %d, want 1", s.Interventions)

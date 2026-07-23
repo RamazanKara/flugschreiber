@@ -85,4 +85,39 @@ spec:
           annotations:
             summary: 'Flugschreiber is serving traffic but recording nothing on {{`{{ $labels.instance }}`}}'
             description: 'Requests are being proxied but the evidence on disk has not grown in 15 minutes. Interactions may be reaching the model and going unrecorded. Check the proxy logs and that the evidence volume is writable.'
+        # Over the size cap means the retention floor is holding evidence the
+        # disk has no room for. Nothing is deleted and nothing will be: keeping
+        # less than the law requires is a decision for a person. The alert is a
+        # capacity ticket with a deadline, and the deadline is when the volume
+        # fills, so it fires long before that.
+        - alert: FlugschreiberEvidenceOverSizeCap
+          expr: flugschreiber_evidence_bytes_over_cap > 0
+          for: 1h
+          labels:
+            severity: warning
+            {{- with $pr.additionalLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          annotations:
+            summary: 'Flugschreiber evidence is over its size cap on {{`{{ $labels.instance }}`}}'
+            description: 'The evidence directory is {{`{{ $value | humanize1024 }}`}}B over its configured cap and everything left is inside the retention floor, so nothing will be deleted. Add storage, or record less by changing the content mode. Deleting evidence early is not something the tool will do on its own.'
+        # An authority that stops answering costs anchors and never records, so
+        # this is a warning rather than a page. It matters because an anchor is
+        # what makes a checkpoint's time a third party's claim instead of this
+        # pod's, and nobody notices its absence until the log is being read by
+        # someone who is not on your side.
+        - alert: FlugschreiberTimestampAnchoringFailing
+          expr: |-
+            sum without (result) (increase(flugschreiber_timestamps_total{result="failure"}[1h])) > 0
+              and
+            sum without (result) (increase(flugschreiber_timestamps_total{result="success"}[1h])) == 0
+          for: 1h
+          labels:
+            severity: warning
+            {{- with $pr.additionalLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          annotations:
+            summary: 'Flugschreiber cannot reach its timestamping authority from {{`{{ $labels.instance }}`}}'
+            description: 'Every anchoring attempt in the last hour failed. Checkpoints are still signed and on disk, so no evidence is lost, but their times are this host clock''s claim rather than a third party''s. Check egress to the authority and whether it is rate limiting.'
 {{- end }}

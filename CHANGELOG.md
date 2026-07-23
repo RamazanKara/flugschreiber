@@ -6,7 +6,7 @@ appears in both places or it did not happen.
 
 ## Unreleased
 
-### v0.2.0 Coverage (in progress)
+### v0.2.0 Coverage
 
 - The OpenAI Responses API (`/v1/responses`) is recorded like chat and
   completions, streamed and not, including `previous_response_id`.
@@ -23,6 +23,58 @@ appears in both places or it did not happen.
   and through the chart.
 - The record format is published as JSON Schema under `docs/schema`, kept in
   sync with the code by a test.
+
+### v0.3.0 Custody
+
+- `keys rotate` rotates the checkpoint signing key and keeps every retired
+  public key under `keys/`, so checkpoints signed before a rotation stay
+  verifiable. Exports and archives carry them.
+- `--signer exec:<command>` signs checkpoints through an external helper, so
+  the private key can live on a smartcard or an HSM instead of beside the
+  evidence. `--signer-public-key` names the key the helper is supposed to hold,
+  and a signature that does not verify against it is refused at startup.
+  The helper is handed no `FLUGSCHREIBER_*` variable, so it never sees the
+  upstream key, the events token or the archive credentials.
+- `--tsa-url` anchors checkpoints to an RFC 3161 timestamping authority, which
+  turns their time from this host's claim into a third party's. Tokens are
+  stored verbatim in `timestamps.jsonl`, checked against the checkpoint they
+  cover, and reported by `verify` and in the generated documentation. An
+  authority that is down costs anchors and never records.
+- `archive-verify` checks that the offsite archive holds every sealed segment,
+  and states which parts of a full verification an archive can and cannot
+  support.
+- `--retention-max-bytes` caps the evidence directory. It reports and never
+  deletes below the retention floor, in the retention output, in the report and
+  as `flugschreiber_evidence_bytes_over_cap`.
+- The ASN.1, SigV4 and SSE parsers have fuzz targets, because all three read
+  bytes from somewhere that is not us.
+- Outward-facing custody moved to `internal/custody`, so `internal/evidence`
+  reaches neither `net/http` nor `os/exec`, which is now checked against the
+  transitive closure rather than only the internal edges.
+- Shutdown drains the timestamping authority before the archive, so the anchor
+  over a run's final checkpoint reaches the offsite copy even when the host
+  never starts again.
+- Two metrics, `flugschreiber_evidence_bytes_over_cap` and
+  `flugschreiber_timestamps_total`, with a dashboard panel and an alert each.
+- The Helm chart passes the signer, anchoring, size cap and content encryption
+  settings through, and the chart check asserts each one reaches the container.
+
+### v0.4.0 Erasure and reach
+
+- `--content-encryption` encrypts stored content under keys held outside the
+  chain, and `erase --session <id> --confirm` destroys those keys. The content
+  becomes unreadable, the chain still verifies from the beginning, and the log
+  gains a record of what was erased and when. Digests remain as written: after
+  an erasure they are claims that can no longer be re-proven, and `inspect`,
+  `export` and the report all say so rather than rendering erased content as
+  empty.
+- `incident` events with a `severity` of `suspected`, `serious` or `resolved`
+  go into the same tamper-evident chain through the authenticated events
+  endpoint, and the report's post-market section pre-fills from them. It is not
+  the report to the authority, and the tool does not decide reportability or
+  track deadlines.
+- The full Annex IV skeleton and Article 50 pack ship in German as well as
+  English, selected with `report --lang en|de|both`, defaulting to both.
 
 
 - The generated Annex IV now tells the truth about the shipped product:

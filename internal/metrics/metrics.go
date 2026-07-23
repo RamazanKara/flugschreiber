@@ -42,6 +42,8 @@ const (
 	nameCheckpoints    = "flugschreiber_checkpoints_total"
 	nameArchiveUploads = "flugschreiber_archive_uploads_total"
 	nameEvidenceBytes  = "flugschreiber_evidence_bytes"
+	nameEvidenceOver   = "flugschreiber_evidence_bytes_over_cap"
+	nameTimestamps     = "flugschreiber_timestamps_total"
 )
 
 // Placeholders used when a value is missing or would push a label past its
@@ -105,6 +107,10 @@ const (
 	CaptureErrorBodyRead CaptureErrorReason = "body_read_failed"
 	// CaptureErrorUpstreamFailed means no response was received to record.
 	CaptureErrorUpstreamFailed CaptureErrorReason = "upstream_failed"
+	// CaptureErrorEncryptFailed means stored content could not be sealed. The
+	// record is still appended, without the text, because the evidence that the
+	// interaction happened is worth more than its content.
+	CaptureErrorEncryptFailed CaptureErrorReason = "encrypt_failed"
 	// CaptureErrorUnknown is the fallback for anything not classified above.
 	CaptureErrorUnknown CaptureErrorReason = "unknown"
 )
@@ -181,6 +187,8 @@ type Metrics struct {
 	checkpoints    *Counter
 	archiveUploads *CounterVec
 	evidenceBytes  *Gauge
+	evidenceOver   *Gauge
+	timestamps     *CounterVec
 
 	models   *boundedSet
 	backends *boundedSet
@@ -221,6 +229,11 @@ func New(b BuildInfo) *Metrics {
 			"backend", "result"),
 		evidenceBytes: NewGauge(nameEvidenceBytes,
 			"Total size in bytes of the evidence segments on disk."),
+		evidenceOver: NewGauge(nameEvidenceOver,
+			"Bytes by which the evidence segments exceed the configured size cap, or 0. "+
+				"A positive value is a disk problem and never a signal to delete: the retention floor still holds."),
+		timestamps: NewCounterVec(nameTimestamps,
+			"RFC 3161 anchoring attempts for signed checkpoints, by outcome.", "result"),
 
 		models:   newBoundedSet(maxModelLabels),
 		backends: newBoundedSet(maxBackendLabels),
@@ -229,7 +242,7 @@ func New(b BuildInfo) *Metrics {
 	for _, c := range []Collector{
 		m.buildInfo, m.requests, m.duration, m.ttfb, m.tokens,
 		m.eventsAppended, m.records, m.captureErrors, m.checkpoints,
-		m.archiveUploads, m.evidenceBytes,
+		m.archiveUploads, m.evidenceBytes, m.evidenceOver, m.timestamps,
 	} {
 		m.reg.MustRegister(c)
 	}
@@ -378,6 +391,38 @@ func (m *Metrics) SetEvidenceBytes(n int64) {
 	m.evidenceBytes.Set(float64(n))
 }
 
+// SetEvidenceBytesOverCap publishes how far the evidence directory is over its
+// configured size cap.
+//
+// It is deliberately a gauge of the overshoot rather than a boolean, because
+// the useful alert is "this has been over for a while and is growing", and
+// because a tool that is over its cap has not misbehaved: the size cap never
+// overrides the retention floor, so being over it means an operator has to add
+// storage or record less. Zero when there is no cap or the directory is under it.
+func (m *Metrics) SetEvidenceBytesOverCap(n int64) {
+	if m == nil {
+		return
+	}
+	if n < 0 {
+		n = 0
+	}
+	m.evidenceOver.Set(float64(n))
+}
+
+// TimestampAnchored records one anchoring attempt against a timestamping
+// authority. Failures are counted separately from checkpoint writes because an
+// authority being down costs anchors and never records.
+func (m *Metrics) TimestampAnchored(ok bool) {
+	if m == nil {
+		return
+	}
+	result := "failure"
+	if ok {
+		result = "success"
+	}
+	m.timestamps.WithLabelValues(result).Inc()
+}
+
 // WriteTo renders the metric set, so that *Metrics is an io.WriterTo and can be
 // dumped without going through HTTP.
 func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
@@ -416,7 +461,7 @@ func normalizeMethod(method string) string {
 
 func normalizeReason(r CaptureErrorReason) CaptureErrorReason {
 	switch r {
-	case CaptureErrorAppendFailed, CaptureErrorBodyRead, CaptureErrorUpstreamFailed:
+	case CaptureErrorAppendFailed, CaptureErrorBodyRead, CaptureErrorUpstreamFailed, CaptureErrorEncryptFailed:
 		return r
 	}
 	return CaptureErrorUnknown

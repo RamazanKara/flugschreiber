@@ -2,6 +2,7 @@ package report
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -68,10 +69,34 @@ type Summary struct {
 	Pruned              bool
 	PrunedThroughSeq    uint64
 
+	// Anchoring state. Timestamps is how many RFC 3161 tokens the directory
+	// holds; TimestampedCheckpoints is how many of them were matched to the
+	// checkpoint they claim to cover. The two differ when a token is filed
+	// against a checkpoint that is not there, which is worth saying out loud
+	// rather than rounding to the friendlier number.
+	Timestamps             int
+	TimestampedCheckpoints int
+
+	// Bytes is the size of the evidence segments on disk, which is what a size
+	// cap is measured against.
+	Bytes int64
+
+	// Encrypted counts records whose content is sealed, and Erased those whose
+	// key an erasure has destroyed. The documentation has to state both: a
+	// reader who is not told will read the missing text as content that was
+	// never captured.
+	Encrypted int
+	Erased    int
+
 	// Human oversight, tallied so Article 14 sections can state what was
 	// recorded instead of opening with a blank TODO.
 	Interventions int
 	ByDecision    []Count
+
+	// Incidents, tallied so the Article 73 post-market section can pre-fill
+	// what was reported instead of a blank TODO.
+	Incidents  int
+	BySeverity []Count
 
 	Endpoints     []Count
 	Upstreams     []Count
@@ -143,6 +168,28 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 	s.KeyID = verified.KeyID
 	s.Pruned = verified.Pruned
 	s.PrunedThroughSeq = verified.PrunedThroughSeq
+	s.Timestamps = verified.Timestamps
+	s.TimestampedCheckpoints = verified.TimestampedCheckpoints
+
+	// A segment that cannot be stat'ed is left out of the total rather than
+	// failing the report: the size is context for a retention decision, and the
+	// chain verification above is what actually has to be exact.
+	if segs, segErr := evidence.Segments(dir); segErr == nil {
+		for _, seg := range segs {
+			if info, statErr := os.Stat(seg.Path); statErr == nil {
+				s.Bytes += info.Size()
+			}
+		}
+	}
+
+	// Erasure is derived from the keystore rather than from the record, because
+	// the chain hashes each record as written and nothing may go back and stamp
+	// it. With no keystore the sealed records are reported as sealed, which is
+	// what an exported bundle should say.
+	var keys *evidence.ContentKeystore
+	if _, statErr := os.Stat(evidence.ContentKeystorePath(dir)); statErr == nil {
+		keys, _ = evidence.OpenContentKeystore(evidence.ContentKeystorePath(dir))
+	}
 
 	endpoints := map[string]int{}
 	upstreams := map[string]int{}
@@ -153,6 +200,7 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 	toolsCalled := map[string]int{}
 	eventTypes := map[string]int{}
 	decisions := map[string]int{}
+	severities := map[string]int{}
 	clients := map[string]struct{}{}
 	sessions := map[string]struct{}{}
 	models := map[string]*ModelStat{}
@@ -176,6 +224,12 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 				decisions[ev.Decision]++
 			}
 		}
+		if ev.EventType == evidence.EventIncident {
+			s.Incidents++
+			if ev.Severity != "" {
+				severities[ev.Severity]++
+			}
+		}
 		if ev.EventType != evidence.EventInference {
 			return nil
 		}
@@ -189,6 +243,13 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 		}
 		if ev.Content != nil {
 			modes[ev.Content.Mode]++
+			if ev.Content.Encryption != nil {
+				if keys.MarkErased(&ev) {
+					s.Erased++
+				} else {
+					s.Encrypted++
+				}
+			}
 		}
 		for _, fr := range ev.FinishReasons {
 			finish[fr]++
@@ -272,6 +333,7 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 	s.ToolsCalled = sortCounts(toolsCalled)
 	s.EventTypes = sortCounts(eventTypes)
 	s.ByDecision = sortCounts(decisions)
+	s.BySeverity = sortCounts(severities)
 	s.DistinctClients = len(clients)
 	s.DistinctSessions = len(sessions)
 

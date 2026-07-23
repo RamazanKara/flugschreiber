@@ -36,6 +36,7 @@ type eventRequest struct {
 	RefRequestID string `json:"ref_request_id"`
 	Actor        string `json:"actor"`
 	Decision     string `json:"decision"`
+	Severity     string `json:"severity"`
 	Note         string `json:"note"`
 }
 
@@ -99,6 +100,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		Method:        r.Method,
 		Actor:         req.Actor,
 		Decision:      req.Decision,
+		Severity:      req.Severity,
 		Note:          req.Note,
 		Status:        http.StatusAccepted,
 	}
@@ -141,10 +143,10 @@ func validateEvent(req *eventRequest) string {
 	if !evidence.RecordableEventType(req.EventType) {
 		return fmt.Sprintf("event_type %q is not recordable; use one of: %s",
 			req.EventType, strings.Join([]string{
-				evidence.EventHumanIntervention, evidence.EventSessionStart,
-				evidence.EventSessionEnd, evidence.EventConfigChange,
-				evidence.EventToolCall, evidence.EventToolResult,
-				evidence.EventSystemEvent,
+				evidence.EventHumanIntervention, evidence.EventIncident,
+				evidence.EventSessionStart, evidence.EventSessionEnd,
+				evidence.EventConfigChange, evidence.EventToolCall,
+				evidence.EventToolResult, evidence.EventSystemEvent,
 			}, ", "))
 	}
 
@@ -160,6 +162,30 @@ func validateEvent(req *eventRequest) string {
 					evidence.DecisionHalt, evidence.DecisionAnnotate,
 				}, ", "))
 		}
+	}
+
+	// An incident record supports Article 73 serious-incident reporting. Like an
+	// intervention, it must name who concluded it and how serious it is, because
+	// an unattributed severity is not something a supervisory authority can act
+	// on. It describes what a human concluded, never what a model did.
+	if req.EventType == evidence.EventIncident {
+		if strings.TrimSpace(req.Actor) == "" {
+			return "actor is required for an incident: a record that does not say who reported it is not incident evidence"
+		}
+		if req.Severity == "" {
+			return fmt.Sprintf("severity is required for an incident; use one of: %s",
+				strings.Join([]string{
+					evidence.SeveritySuspected, evidence.SeveritySerious,
+					evidence.SeverityResolved,
+				}, ", "))
+		}
+	}
+
+	if req.Severity != "" && !evidence.ValidSeverity(req.Severity) {
+		return fmt.Sprintf("severity %q is not recognised", req.Severity)
+	}
+	if req.Severity != "" && req.EventType != evidence.EventIncident {
+		return "severity may only be set on an incident event"
 	}
 
 	if req.Decision != "" && !evidence.ValidDecision(req.Decision) {

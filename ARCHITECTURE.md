@@ -40,25 +40,41 @@ dropped evidence.
 cmd/flugschreiber, cmd/proxyd ──▶ internal/cli ──▶ everything below
 
 internal/proxy ──▶ config, content, openai, evidence, metrics, version
-internal/report ──▶ config, evidence          internal/audit ──▶ evidence
+internal/report ──▶ config, evidence          internal/audit ──▶ content, evidence
 internal/config ──▶ content, evidence         internal/openai ──▶ evidence
-internal/content ──▶ evidence
+internal/content ──▶ evidence                 internal/custody ──▶ evidence
 
 foundations, no internal imports at all:
   evidence   archive   metrics   pdf   mockupstream   version
 ```
 
-Three of those edges are rules, not accidents:
+Four of those edges are rules, not accidents:
 
 **`internal/evidence` imports nothing internal.** `flugschreiber verify` is
 the command a third party runs against a copy of the log, possibly years from
 now, possibly after reimplementing it from `docs/SCHEMA.md`. The package that
 defines what the evidence *is* must be readable and auditable on its own, with
-no HTTP client, no S3 signer and no metrics registry in its closure.
+no HTTP client, no S3 signer and no metrics registry in its closure. That is
+checked against the transitive closure and not just the internal edges, because
+the ways to break it are all convenient: one call to a timestamping authority
+and the package drags in a TLS stack.
+
+**`internal/custody` is where that closure gets its escape hatch.** Two features
+genuinely need the outside world: signing through an external helper, so the key
+can live on a smartcard rather than beside the evidence, and anchoring
+checkpoints to an RFC 3161 authority, so their time is a third party's claim
+rather than this host's. Evidence declares `Signer` and `Timestamper`; custody
+implements them with `os/exec` and `net/http`. Everything that decides whether
+an answer is *acceptable* stays in evidence: custody posts a prepared request
+and hands back what came out, and the check that a token covers the right
+digest, along with all the ASN.1, sits with the verifier.
 
 **`internal/archive` does not import `internal/evidence`.** The store declares
 the `Archiver` interface it needs; the archive backends satisfy it
-structurally. The dependency points from the thing that must always work to
+structurally. What goes into an archive is therefore a decision the store makes,
+and it makes one: everything a third party would need to verify the copy,
+including the anchors and every public key a checkpoint names, keyed so that a
+locked bucket never has to overwrite an object (D42). The dependency points from the thing that must always work to
 nothing at all, so a bug in SigV4 signing cannot be in the same import graph as
 chain verification.
 

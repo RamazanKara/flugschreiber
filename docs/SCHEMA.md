@@ -9,17 +9,26 @@ Schema version: **1**
   seg-00000001.jsonl    # chained records, append-only
   seg-00000002.jsonl
   checkpoints.jsonl     # signed attestations of the chain head over time
+  timestamps.jsonl      # RFC 3161 tokens anchoring checkpoints, if anchoring is on
   public-key.pem        # Ed25519 public key, PKIX, always exported
+  keys/retired-*.pem    # public halves of rotated-out keys, always exported
   signing-key.pem       # Ed25519 private key, PKCS#8, mode 0600, NEVER exported
   client-salt           # 32 random bytes, mode 0600, NEVER exported
+  content-keys.json     # wrapped content keys, mode 0600, NEVER exported
   pruned.json           # present only once retention has deleted segments
   LEGAL_HOLD            # present only while a hold is in force
 ```
 
-Three of those files never leave the host. `signing-key.pem` and `client-salt`
-are excluded from every export, and `flugschreiber export` will refuse to
-include them. A recipient of an evidence bundle can verify everything and
-reverse nothing.
+The private files never leave the host. `signing-key.pem`, `client-salt` and
+`content-keys.json` are excluded from every export twice over: the collector
+only ever gathers known-good filenames, and anything in the secret set is then
+refused with an error rather than skipped, so a future bug in the first layer
+cannot become a leaked key. A recipient of an evidence bundle can verify everything
+and reverse nothing.
+
+Every public key is exported, including retired ones. A checkpoint signed before
+a rotation is still evidence, and a bundle that carried only the current key
+would strand it.
 
 Each segment is newline-delimited JSON, one record per line, appended only.
 Segments roll at 64 MiB by default. The chain continues across segments: the
@@ -90,12 +99,16 @@ no server, and exits non-zero if anything fails.
   "model_requested": "llama-3.1-8b-instruct",
   "model_served": "llama-3.1-8b-instruct",
   "upstream_response_id": "chatcmpl-8d768b29abbc8b42",
+  "upstream_previous_id": "resp-4b1a0c",
   "params": { "temperature": 0.2, "max_tokens": 512 },
   "usage": { "prompt_tokens": 180, "completion_tokens": 64, "total_tokens": 244 },
   "stream": true,
   "finish_reasons": ["stop"],
   "tool_calls": [
     { "index": 0, "id": "call_1", "name": "lookup_order", "arguments_sha256": "..." }
+  ],
+  "tool_results": [
+    { "call_id": "call_1", "sha256": "...", "bytes": 214 }
   ],
   "status": 200,
   "latency_ms": 812.4,
@@ -110,7 +123,22 @@ no server, and exits non-zero if anything fails.
 
 Absent fields are omitted rather than zero-filled, so a reader can distinguish
 "not observed" from "observed as zero". Field meanings and their caveats are in
-[MAPPING.md](../MAPPING.md).
+[MAPPING.md](../MAPPING.md), and the machine-readable form is
+[event.schema.json](schema/event.schema.json), which a test keeps in step with
+the code.
+
+`tool_calls` is what the model asked for. `tool_results` is what your application
+sent back on the next turn, digested in every content mode on the same rule as
+prompts and completions. `upstream_previous_id` is the Responses API's
+`previous_response_id`, which is how a multi-turn conversation is stitched
+together when the turns are separate HTTP requests.
+
+Events other than `inference` carry a different subset. A `human_intervention`
+carries `actor`, `decision`, `ref_request_id` and `note`; an `incident` carries
+`severity`, one of `suspected`, `serious` or `resolved`, alongside the actor and
+the interaction it concerns. Both are written through the authenticated events
+endpoint, never by the proxy, because only a person can conclude that something
+went wrong.
 
 ### Content modes
 
@@ -129,6 +157,26 @@ to be the transcript of the interaction this log attests to.
 For streamed responses, `output.sha256` covers the raw SSE bytes as received;
 `output.text` (in `store` and `redact`) is the reassembled message the client
 saw, not the frames.
+
+### Encrypted content and erasure
+
+With content encryption on, the text-bearing fields are replaced by
+`payload.ciphertext` and the record carries a `content.encryption` object naming
+the algorithm and the key that wraps it. The digest is unchanged: it is still
+over the plaintext wire bytes, so an encrypted record proves exactly what an
+unencrypted one proves.
+
+Erasure destroys the key, never the record. `flugschreiber erase` deletes the
+wrapped key from the keystore and appends a `system_event` saying what was
+erased and when; the ciphertext stays where it is, so the chain verifies from the
+beginning exactly as before. `content.encryption.erased` and `erased_at` are how
+a reader is told the difference between content that was never captured and
+content that was captured and then destroyed.
+
+The digest survives the erasure and this is the part to be exact about. It
+remains a true statement about bytes that once existed, and it can no longer be
+checked against them by anyone, including you. It is a claim that can no longer
+be re-proven, and nothing in the tool will present it as more than that.
 
 ## Signed checkpoints
 
@@ -224,6 +272,31 @@ says so.
 
 It is checked at enforcement time rather than cached, so dropping the file in
 place stops the next scheduled deletion without restarting anything.
+
+## Archive layout
+
+When an archive backend is configured, the store ships a copy offsite. It is
+archival and never the write path: object stores cannot append, so the local
+segment is always primary.
+
+```
+segments/seg-XXXXXXXX.jsonl                     sealed segments, final
+open/seg-XXXXXXXX.seq-NNNNNNNNNNNN.jsonl        the segment still being written
+checkpoints/checkpoints.seq-NNNNNNNNNNNN.jsonl  snapshot at that chain head
+timestamps/timestamps.bytes-NNNNNNNNNNNN.jsonl  snapshot at that file length
+public-key.pem
+keys/retired-<key id>.pem                       every key a checkpoint names
+```
+
+Only sealed segments have final names. Everything that is still growing goes up
+as a snapshot under a key naming what that snapshot covers, so an archive with
+Object Lock never has to overwrite an object.
+
+`pruned.json` and `LEGAL_HOLD` stay on the host: they describe this
+installation's deletions and holds rather than the evidence. A directory
+reassembled from the archive alone therefore verifies, but it is not a complete
+evidence directory, and `flugschreiber archive-verify` says which parts of a
+full check it could and could not perform.
 
 ## Compatibility policy
 

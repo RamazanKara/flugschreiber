@@ -25,6 +25,12 @@ const (
 	CheckpointsFile = "checkpoints.jsonl"
 	PruneAnchorFile = "pruned.json"
 	LegalHoldFile   = "LEGAL_HOLD"
+
+	// RetiredKeysDir holds the public half of every key rotation has replaced.
+	// They are kept forever: a checkpoint signed in 2026 has to stay checkable
+	// after the key that signed it has been retired, or rotation would quietly
+	// invalidate the log's own history.
+	RetiredKeysDir = "keys"
 )
 
 // PEM block types, chosen so that openssl reads both files without being told

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RamazanKara/flugschreiber/internal/content"
 	"github.com/RamazanKara/flugschreiber/internal/evidence"
@@ -210,5 +211,127 @@ func TestUpstreamsRejectCAAndSkipTogether(t *testing.T) {
 	}
 	if err := c.Validate(); err == nil {
 		t.Fatal("a route setting both a CA file and skip-verify was accepted")
+	}
+}
+
+// A misconfigured custody setting costs evidence for as long as nobody looks at
+// it, so every one of these is refused at startup rather than at first use.
+func TestValidateRefusesUnusableCustodySettings(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(Config) Config
+		wants  string
+	}{
+		{
+			name:   "a signer form this build does not understand",
+			mutate: func(c Config) Config { c.Signer = "pkcs11:slot0"; c.SignerPublicKey = "pub.pem"; return c },
+			wants:  "exec:",
+		},
+		{
+			name:   "a signer that names no command",
+			mutate: func(c Config) Config { c.Signer = "exec:   "; c.SignerPublicKey = "pub.pem"; return c },
+			wants:  "names no command",
+		},
+		{
+			name:   "an external signer with no public key to check it against",
+			mutate: func(c Config) Config { c.Signer = "exec:/usr/bin/sign"; return c },
+			wants:  "signer_public_key",
+		},
+		{
+			name:   "a public key with no signer to use it",
+			mutate: func(c Config) Config { c.SignerPublicKey = "pub.pem"; return c },
+			wants:  "no signer",
+		},
+		{
+			name: "an external signer while signing is off",
+			mutate: func(c Config) Config {
+				c.Signer = "exec:/usr/bin/sign"
+				c.SignerPublicKey = "pub.pem"
+				c.SigningDisabled = true
+				return c
+			},
+			wants: "signing is disabled",
+		},
+		{
+			name:   "an anchoring URL that is not one",
+			mutate: func(c Config) Config { c.TSAURL = "tsa.example.com"; return c },
+			wants:  "tsa_url",
+		},
+		{
+			name:   "anchoring while signing is off, so there is nothing to anchor",
+			mutate: func(c Config) Config { c.TSAURL = "https://tsa.example"; c.SigningDisabled = true; return c },
+			wants:  "signing is disabled",
+		},
+		{
+			name:   "an anchoring interval with no authority",
+			mutate: func(c Config) Config { c.TSAInterval = Duration(time.Hour); return c },
+			wants:  "no timestamping authority",
+		},
+		{
+			name:   "a negative size cap",
+			mutate: func(c Config) Config { c.RetentionMaxBytes = -1; return c },
+			wants:  "retention_max_bytes",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := tc.mutate(base())
+
+			err := c.Validate()
+			if err == nil {
+				t.Fatal("the configuration was accepted")
+			}
+			if !strings.Contains(err.Error(), tc.wants) {
+				t.Errorf("the error does not say what is wrong: %v", err)
+			}
+		})
+	}
+}
+
+// base is a configuration that validates, so that each case below fails for the
+// one reason it is about.
+func base() Config {
+	c := Default()
+	c.MockUpstream = true
+	return c
+}
+
+func TestValidateAcceptsAFullyConfiguredCustodySetup(t *testing.T) {
+	c := base()
+	c.Signer = "exec:/usr/bin/pkcs11-sign --slot 0"
+	c.SignerPublicKey = "/etc/flugschreiber/helper-public-key.pem"
+	c.TSAURL = "https://freetsa.org/tsr"
+	c.TSAInterval = Duration(30 * time.Minute)
+	c.RetentionMaxBytes = 50 << 30
+
+	if err := c.Validate(); err != nil {
+		t.Fatalf("a valid custody setup was refused: %v", err)
+	}
+}
+
+func TestApplyEnvOverlaysCustodySettings(t *testing.T) {
+	t.Setenv(EnvPrefix+"SIGNER", "exec:/usr/bin/sign")
+	t.Setenv(EnvPrefix+"SIGNER_PUBLIC_KEY", "/keys/pub.pem")
+	t.Setenv(EnvPrefix+"TSA_URL", "https://tsa.example/tsr")
+	t.Setenv(EnvPrefix+"TSA_INTERVAL", "45m")
+	t.Setenv(EnvPrefix+"RETENTION_MAX_BYTES", "1073741824")
+	t.Setenv(EnvPrefix+"CONTENT_ENCRYPTION", "true")
+
+	c := Default()
+	if err := c.ApplyEnv(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Signer != "exec:/usr/bin/sign" || c.SignerPublicKey != "/keys/pub.pem" {
+		t.Errorf("signer settings not applied: %q, %q", c.Signer, c.SignerPublicKey)
+	}
+	if c.TSAURL != "https://tsa.example/tsr" || c.TSAInterval.Std() != 45*time.Minute {
+		t.Errorf("anchoring settings not applied: %q, %s", c.TSAURL, c.TSAInterval.Std())
+	}
+	if c.RetentionMaxBytes != 1<<30 {
+		t.Errorf("RetentionMaxBytes = %d", c.RetentionMaxBytes)
+	}
+	if !c.ContentEncryption {
+		t.Error("ContentEncryption was not applied")
 	}
 }

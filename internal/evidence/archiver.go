@@ -116,15 +116,46 @@ func (s *Store) archiveOpenSegment() {
 }
 
 // archiveCheckpoints queues the checkpoint file as it stands, keyed by the head
-// it attests to. Checkpoints are what let a reader of the archive check the
-// segments in it, so they travel with them rather than only at shutdown, which
-// a crash never reaches.
+// it attests to, together with the anchors over it. Checkpoints are what let a
+// reader of the archive check the segments in it, so they travel with them
+// rather than only at shutdown, which a crash never reaches.
 func (s *Store) archiveCheckpoints() {
-	if s.opts.Keys == nil || s.checkpointSeq == 0 {
+	if s.signer != nil && s.checkpointSeq > 0 {
+		key := fmt.Sprintf("checkpoints/checkpoints.seq-%012d.jsonl", s.checkpointSeq)
+		s.enqueueUpload(s.archiveKey(key), filepath.Join(s.opts.Dir, CheckpointsFile))
+	}
+	s.archiveTimestamps()
+}
+
+// archiveTimestamps queues the RFC 3161 anchors as they stand, under a key
+// naming how much of the file the snapshot covers.
+//
+// They go up whether or not this run signs or anchors anything: a
+// timestamps.jsonl an earlier run left behind still has to reach the archive,
+// and it is what dates the checkpoints already there. An archive that holds the
+// checkpoints but not their anchors silently downgrades every timestamp in it
+// to the operator's own claim.
+//
+// The key is the length rather than the head sequence, because anchors are
+// appended by the timestamping goroutine and not by the writer, and Close
+// drains the archive before it drains the timestamper. The anchor over the last
+// checkpoint of a run therefore reaches the file after that file has been
+// snapshotted. Keyed by head, the next start would offer the same key for the
+// longer file, Exists would answer yes, and those anchors would stay on the
+// host for good; an installation that is shut down for the last time would
+// leave its final anchors out of the offsite copy entirely. The file only ever
+// grows, so its length names its contents and a file that has gained an anchor
+// always asks for a key nothing holds yet.
+func (s *Store) archiveTimestamps() {
+	if s.uploads == nil {
 		return
 	}
-	key := fmt.Sprintf("checkpoints/checkpoints.seq-%012d.jsonl", s.checkpointSeq)
-	s.enqueueUpload(s.archiveKey(key), filepath.Join(s.opts.Dir, CheckpointsFile))
+	info, path, ok := s.statEvidenceFile(TimestampsFile)
+	if !ok || info.Size() == 0 {
+		return
+	}
+	key := fmt.Sprintf("timestamps/timestamps.bytes-%012d.jsonl", info.Size())
+	s.enqueueUpload(s.archiveKey(key), path)
 }
 
 // archiveCatchUp queues every sealed segment and the current checkpoint file,
@@ -149,15 +180,65 @@ func (s *Store) archiveCatchUp(segs []SegmentInfo) {
 	s.archiveCheckpoints()
 }
 
-// archivePublicKey queues the public half of the signing key. Without it the
-// archived checkpoints are unverifiable by whoever holds the bucket, which is
-// usually not the person holding the evidence directory.
-func (s *Store) archivePublicKey() {
-	path := filepath.Join(s.opts.Dir, PublicKeyFile)
-	if _, err := os.Stat(path); err != nil {
+// archiveVerificationKeys queues every public key a reader of the archive needs to
+// check what is in it: the key in force, and the public half of each key a
+// rotation has retired. Without them the archived checkpoints are unverifiable
+// by whoever holds the bucket, which is usually not the person holding the
+// evidence directory, and after a rotation that gap covers every checkpoint
+// signed before it.
+//
+// The retired set cannot change while this store is open, because RotateKey
+// refuses to run while a writer holds the directory, so reading it at the two
+// points this is called from is enough.
+func (s *Store) archiveVerificationKeys() {
+	if s.uploads == nil {
 		return
 	}
-	s.enqueueUpload(s.archiveKey(PublicKeyFile), path)
+	s.archiveByName(PublicKeyFile)
+
+	retired, err := RetiredKeyFiles(s.opts.Dir)
+	if err != nil {
+		s.archiveFailed.Add(1)
+		s.recordArchiveErr(fmt.Errorf(
+			"%w; the checkpoints signed before a rotation cannot be checked from the archive without those keys", err))
+		return
+	}
+	for _, name := range retired {
+		s.archiveByName(name)
+	}
+}
+
+// archiveByName queues one file that keeps its own name in the archive. The
+// name is slash separated because it is an object key.
+func (s *Store) archiveByName(name string) {
+	if _, path, ok := s.statEvidenceFile(name); ok {
+		s.enqueueUpload(s.archiveKey(name), path)
+	}
+}
+
+// statEvidenceFile locates one file in the evidence directory and reports
+// whether it can be archived, along with the local path to read it from.
+//
+// A file that is not there is not a failure: most directories have never
+// rotated a key, most have never anchored a checkpoint, and a log written with
+// signing off has no public key at all. A file that is there and cannot be
+// examined is a failure, and is counted and reported rather than passed over,
+// because an archive quietly missing a key or an anchor is indistinguishable
+// from one that never needed either, and the operator finds out only when
+// somebody tries to verify the offsite copy.
+func (s *Store) statEvidenceFile(name string) (os.FileInfo, string, bool) {
+	path := filepath.Join(s.opts.Dir, filepath.FromSlash(name))
+	info, err := os.Stat(path)
+	switch {
+	case err == nil:
+		return info, path, true
+	case errors.Is(err, os.ErrNotExist):
+		return nil, path, false
+	default:
+		s.archiveFailed.Add(1)
+		s.recordArchiveErr(fmt.Errorf("evidence: archive %s: %w", name, err))
+		return nil, path, false
+	}
 }
 
 // enqueueUpload hands one file to the background archiver and never waits. The
@@ -226,10 +307,12 @@ func (s *Store) upload(job archiveJob) error {
 	if err != nil {
 		return fmt.Errorf("evidence: archive %s: %w", job.key, err)
 	}
-	// checkpoints.jsonl can grow while an earlier snapshot of it is on its way
-	// up. Sending only the bytes that were there when the size was measured
-	// keeps the object exactly what its key says it is, and keeps a file that
-	// grows mid-upload from failing on a length mismatch.
+	// checkpoints.jsonl and timestamps.jsonl grow while an earlier snapshot of
+	// them is on its way up. The size is measured here rather than when the job
+	// was queued, so the object holds the file as it stood when the upload
+	// began: at least what its key names, and sometimes a little more. Sending
+	// exactly that many bytes keeps a file that grows mid-upload from failing on
+	// a length mismatch.
 	body := io.LimitReader(f, info.Size())
 	if err := s.opts.Archiver.Put(s.archiveCtx, job.key, body, info.Size(), archiveContentType(job.path)); err != nil {
 		return fmt.Errorf("evidence: archive %s to %s: %w", job.key, s.opts.Archiver.Name(), err)

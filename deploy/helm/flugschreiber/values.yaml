@@ -140,6 +140,50 @@ config:
   # than discovering later that the key was there all along.
   signingDisabled: false
 
+  # -- Sign checkpoints through an external helper instead of a key on the
+  # volume, as "exec:<command>". This is how key custody moves off the host
+  # that holds the evidence, which is the security boundary the whole chain
+  # rests on. The command runs inside the proxy container, so the image has to
+  # contain it: a PKCS#11 tool talking to an HSM, or a sidecar's socket client.
+  #
+  # It needs signerPublicKey. Without it, a helper wired to the wrong key would
+  # produce checkpoints that are well formed and worthless.
+  signer: ""
+
+  # -- Path inside the container to the PEM public key the helper holds. The
+  # proxy refuses a signature that does not verify against it, at startup
+  # rather than in an audit.
+  signerPublicKey: ""
+
+  # -- RFC 3161 timestamping authority to anchor checkpoints to, e.g.
+  # https://freetsa.org/tsr. Anchoring turns a checkpoint's time from this
+  # pod's clock into a third party's claim, which is what a host-clock attacker
+  # cannot forge.
+  #
+  # The pod needs egress to it. An authority that is down costs anchors and
+  # never records: checkpoints are signed and fsynced either way.
+  tsaUrl: ""
+
+  # -- How often to anchor a checkpoint, e.g. "1h". Empty uses the binary's
+  # default of one hour. An authority is somebody else's rate-limited and
+  # sometimes billed service, so this is not the checkpoint interval.
+  tsaInterval: ""
+
+  # -- Size cap on the evidence directory in bytes. 0 disables it.
+  #
+  # It reports; it does not delete. The retention floor wins, so a directory
+  # over the cap with everything still inside retention means the tool says so
+  # and deletes nothing. Wire the alert rule on
+  # flugschreiber_evidence_bytes_over_cap and treat it as a capacity ticket,
+  # because keeping less evidence than the law requires is a decision for a
+  # person.
+  retentionMaxBytes: 0
+
+  # -- Encrypt stored content at rest so that an erasure request can destroy
+  # the key rather than the chain. Only meaningful with contentMode store or
+  # redact; hash mode retains no text to encrypt.
+  contentEncryption: false
+
   # -- debug, info, warn or error. Logs are JSON on stderr.
   logLevel: info
 

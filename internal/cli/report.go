@@ -113,15 +113,16 @@ Flags:
 	}
 
 	generated, err := report.Generate(report.Input{
-		Summary:        summary,
-		Deployment:     cfg.Deployment,
-		ContentMode:    contentMode,
-		RedactPatterns: cfg.RedactPatterns,
-		RetentionDays:  cfg.RetentionDays,
-		DataDir:        *dir,
-		Version:        version.String(),
-		Now:            now,
-		Lang:           *lang,
+		Summary:           summary,
+		Deployment:        cfg.Deployment,
+		ContentMode:       contentMode,
+		RedactPatterns:    cfg.RedactPatterns,
+		RetentionDays:     cfg.RetentionDays,
+		RetentionMaxBytes: cfg.RetentionMaxBytes,
+		DataDir:           *dir,
+		Version:           version.String(),
+		Now:               now,
+		Lang:              *lang,
 	})
 	if err != nil {
 		return err

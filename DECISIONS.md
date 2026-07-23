@@ -531,3 +531,116 @@ struct json tags against the schema field names and fails on drift in either
 direction, so the published schema cannot fall behind the code. The test checks
 the field set, which catches the add-and-forget mistake; it does not assert
 every field's exact type or nesting, which the prose in docs/SCHEMA.md covers.
+
+## D38. Outward-facing custody lives in internal/custody, never in evidence
+
+Two features need the outside world: signing through an external helper, so the
+key can sit on a smartcard rather than beside the evidence, and anchoring
+checkpoints to an RFC 3161 authority, so their time is a third party's claim
+rather than this host's. Both were built inside internal/evidence first, which
+put os/exec and net/http into the closure of the one package that has to stay
+readable on its own.
+
+They now live in internal/custody. Evidence declares Signer and Timestamper;
+custody implements them. The split runs along a specific line: custody carries
+bytes and nothing else, so it posts a prepared request and returns whatever came
+back, while every decision about whether an answer is acceptable, including all
+the ASN.1 and the check that a token covers the right digest, stays with the
+verifier. A regulator reading internal/evidence years from now reads no TLS
+stack and no subprocess machinery, and test/architecture_test.go checks the
+transitive closure rather than just the internal edges, because that is the
+invariant and the internal edges were only ever a proxy for it.
+
+## D39. The size cap reports; it never deletes evidence early
+
+RetentionPolicy.MaxBytes caps the evidence directory. Enforcement already
+deletes every segment that is beyond the retention floor, oldest first, so by
+the time the cap is consulted there is nothing further it is permitted to take:
+what remains is either inside the floor or held by a legal hold. Being over the
+cap at that point is reported, in the retention output, in the report and as
+flugschreiber_evidence_bytes_over_cap, and nothing is deleted.
+
+The alternative would be a tool that quietly deletes evidence below the Article
+19 six-month floor because a disk filled up at three in the morning. Disk
+pressure against a legal floor is an operator's decision. The cap's job is to
+make sure they find out in time to make it.
+
+## D40. Erasure destroys keys, never records
+
+`store` and `redact` modes retain text, and text attracts deletion requests. The
+obvious implementation, going back and blanking the fields, is the one thing
+this design cannot do: the chain hashes each record as it was written, so
+rewriting one breaks verification from that point onwards, and a log that stops
+verifying because somebody exercised a data subject right is worse than useless.
+
+So content encryption seals the text-bearing fields under a per-session key,
+wrapped by a master key in a keystore beside the evidence but outside the chain,
+and `erase` destroys the wrapped key. The record is untouched, the chain still
+verifies from the beginning, and the content is unreadable to everyone including
+us. Erasure is documented by appending a new record rather than by editing an
+old one; the erased state a reader sees is derived at read time from the
+keystore, which is why a bundle without the keystore reports its content as
+sealed rather than as erased. Those are different facts.
+
+The digest is the part worth being exact about. It is computed over the
+plaintext wire bytes in every mode, so an encrypted record proves exactly what
+an unencrypted one proves. After an erasure it survives as a true statement
+about bytes nobody can produce any more: a claim that can no longer be
+re-proven. `evidence.ErasedDigestCaveat` is that sentence, and every renderer
+prints it, because "content not retained" would imply it was never stored and
+silence would let a reader take the digest for something still testable.
+
+Encryption is opt-in. It adds a key an operator has to look after, and losing
+that key destroys content exactly as thoroughly as an erasure does. That trade
+belongs to whoever runs it.
+
+
+## D41. Shutdown drains the timestamper before the archive
+
+Anchors are appended by the timestamping goroutine, not by the writer, so the
+anchor over a run's last checkpoint lands in timestamps.jsonl after the shutdown
+flush has already snapshotted that file for the archive. With the archive
+drained first, that anchor stayed on the host until the next start.
+
+The next start ships it, and the archive object is keyed by the file's length
+rather than by the chain head so that a longer file always asks for a key the
+archive does not hold yet. That covers every restart. It does not cover the last
+shutdown an installation ever performs, and a decommissioned host is exactly the
+case where the offsite copy is all that is left.
+
+So Close drains the timestamper, offers the anchors to the archive once more,
+and only then drains the archive. Both drains are bounded, so the worst case is
+a slower shutdown rather than one that does not finish. The test that pins this
+makes the authority answer slowly on purpose: an instant answer lands before the
+snapshot and would pass against the bug.
+
+## D42. The archive carries everything a verification needs, keyed so nothing is overwritten
+
+An archive that holds the segments and the checkpoints but not the keys those
+checkpoints were signed with is an archive nobody can verify. After a rotation
+that is exactly what it was, and the failure only shows up in somebody else's
+hands, weeks later, with nothing to explain it. So the layout is:
+
+```
+segments/seg-XXXXXXXX.jsonl                     sealed segments, final
+open/seg-XXXXXXXX.seq-NNNNNNNNNNNN.jsonl        the segment still being written
+checkpoints/checkpoints.seq-NNNNNNNNNNNN.jsonl  snapshot at that chain head
+timestamps/timestamps.bytes-NNNNNNNNNNNN.jsonl  snapshot at that file length
+public-key.pem, keys/retired-<key id>.pem       every key a checkpoint names
+```
+
+Only sealed segments have final names. Everything that grows goes up as a
+snapshot under a key that says what the snapshot covers, so an object store with
+a lock never has to overwrite anything, and a run that added nothing offers a key
+the bucket already holds and is skipped after one HEAD.
+
+The anchors are keyed by the file's length rather than by the chain head, and
+that difference is load-bearing. Anchors are appended by the timestamping
+goroutine, so one can land after a head-keyed snapshot has gone up; the next run
+would offer the same key, the bucket would answer "already there", and those
+anchors would stay on the host for good. Length changes whenever an anchor is
+added, so a file that has gained one always asks for a key nothing holds yet.
+See D41 for the shutdown ordering that covers the case with no next run.
+
+`pruned.json` and `LEGAL_HOLD` stay on the host. They describe this
+installation's deletions and holds, not the evidence.

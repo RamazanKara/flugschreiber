@@ -1,10 +1,13 @@
 package audit
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
+	"github.com/RamazanKara/flugschreiber/internal/content"
 	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
@@ -23,6 +26,14 @@ type Session struct {
 	// default hash mode it is false, and a reader needs to be told that
 	// plainly rather than concluding the session was empty.
 	ContentAvailable bool `json:"content_available"`
+
+	// Encrypted counts entries whose content is sealed and could not be opened
+	// here, and Erased counts those whose key has been destroyed. They are
+	// separate numbers because they mean different things: the first is a
+	// reader without the keystore, the second is content that no longer exists
+	// for anyone.
+	Encrypted int `json:"encrypted,omitempty"`
+	Erased    int `json:"erased,omitempty"`
 }
 
 // SessionEntry is one record rendered for a human reader.
@@ -47,6 +58,12 @@ type SessionEntry struct {
 	Output     string             `json:"output,omitempty"`
 	InputHash  string             `json:"input_sha256,omitempty"`
 	OutputHash string             `json:"output_sha256,omitempty"`
+
+	// ContentState is empty, contentEncrypted or contentErased. An erased entry carries
+	// ErasedAt and keeps its digests, which is the honest rendering: the
+	// content is gone and the record still says which interaction it was.
+	ContentState string `json:"content_state,omitempty"`
+	ErasedAt     string `json:"erased_at,omitempty"`
 
 	ToolCalls []evidence.ToolCall `json:"tool_calls,omitempty"`
 
@@ -74,6 +91,12 @@ func Reconstruct(dir string, q Query) (*Session, error) {
 	s := &Session{SessionID: q.SessionID}
 	models := map[string]struct{}{}
 	clients := map[string]struct{}{}
+
+	// A reader holding the keystore sees the text; a reader without it sees
+	// that there was text and cannot read it. Both are correct answers, and the
+	// one thing that must never happen is rendering either as an empty
+	// conversation.
+	keys, decryptor := openKeystore(dir)
 
 	err := evidence.Walk(dir, func(e evidence.Entry) error {
 		if !matches(e.Event, q) {
@@ -111,6 +134,22 @@ func Reconstruct(dir string, q Query) (*Session, error) {
 		if ev.Usage != nil {
 			entry.PromptTokens = ev.Usage.PromptTokens
 			entry.CompletionTokens = ev.Usage.CompletionTokens
+		}
+		if ev.Content != nil && ev.Content.Encryption != nil {
+			// Anything that is not a successful decryption leaves the state
+			// set, so a record can never fall through as ordinary content that
+			// merely happens to be empty.
+			switch derr := decrypt(decryptor, &ev); {
+			case derr == nil:
+			case errors.Is(derr, evidence.ErrContentKeyErased):
+				keys.MarkErased(&ev)
+				entry.ContentState = contentErased
+				entry.ErasedAt = ev.Content.Encryption.ErasedAt
+				s.Erased++
+			default:
+				entry.ContentState = contentEncrypted
+				s.Encrypted++
+			}
 		}
 		if ev.Content != nil {
 			if in := ev.Content.Input; in != nil {
@@ -235,20 +274,79 @@ func (s *Session) Render(w *strings.Builder) {
 			if e.Note != "" {
 				fmt.Fprintf(w, "     %s\n", e.Note)
 			}
+			// "not retained" is only true when nothing was ever captured.
+			// Saying it about erased or sealed content would tell a reader the
+			// text never existed, which is a different and false fact.
 			if len(e.Input) == 0 && e.Output == "" && e.InputHash != "" {
-				fmt.Fprintf(w, "     content not retained; input %s output %s\n",
-					shortHash(e.InputHash), shortHash(e.OutputHash))
+				switch e.ContentState {
+				case contentErased:
+					fmt.Fprintf(w, "     content ERASED on %s; input %s output %s\n",
+						e.ErasedAt, shortHash(e.InputHash), shortHash(e.OutputHash))
+				case contentEncrypted:
+					fmt.Fprintf(w, "     content encrypted, not readable here; input %s output %s\n",
+						shortHash(e.InputHash), shortHash(e.OutputHash))
+				default:
+					fmt.Fprintf(w, "     content not retained; input %s output %s\n",
+						shortHash(e.InputHash), shortHash(e.OutputHash))
+				}
 			}
 		}
 		w.WriteString("\n")
 	}
 
-	if !s.ContentAvailable {
+	if s.Erased > 0 {
+		fmt.Fprintf(w, "\n%d record(s) had their content erased under a deletion request.\n", s.Erased)
+		w.WriteString("The records themselves are unchanged and the chain still verifies; what was\n")
+		w.WriteString("destroyed is the key that opened them. Their digests remain as claims that can\n")
+		w.WriteString("no longer be re-proven. The system_event above names who asked and when.\n")
+	}
+	if s.Encrypted > 0 {
+		fmt.Fprintf(w, "\n%d record(s) carry encrypted content this reader cannot open.\n", s.Encrypted)
+		w.WriteString("The content keystore is not in this directory, which is the expected\n")
+		w.WriteString("state for an exported bundle: a bundle carries the evidence and never\n")
+		w.WriteString("the keys. Read them where the keystore lives, or have the operator\n")
+		w.WriteString("provide the text deliberately.\n")
+	}
+	if !s.ContentAvailable && s.Erased == 0 && s.Encrypted == 0 {
 		w.WriteString("No prompt or completion text is recorded in this log.\n")
 		w.WriteString("The content mode was hash, which retains a digest of each request and\n")
 		w.WriteString("response and no text. The digests above still prove which interaction\n")
 		w.WriteString("each record describes.\n")
 	}
+}
+
+// The values SessionEntry.ContentState takes. Empty means the content is
+// exactly what the record says it is.
+const (
+	contentEncrypted = "encrypted"
+	contentErased    = "erased"
+)
+
+// decrypt opens a sealed record, or reports that there was no reader to open it
+// with. A missing keystore is not an error anywhere else in this package, but
+// here it has to produce the same non-nil result as a failed decryption, so
+// that the caller has one path for "this content is not readable".
+func decrypt(d *content.Encryptor, ev *evidence.Event) error {
+	if d == nil {
+		return errors.New("audit: no content keystore in this directory")
+	}
+	return d.DecryptEvent(ev)
+}
+
+// openKeystore returns the content keystore for dir, or nils when there is
+// none. A missing keystore is the ordinary case, not an error: it is what every
+// log written without content encryption looks like, and what every exported
+// bundle looks like by design.
+func openKeystore(dir string) (*evidence.ContentKeystore, *content.Encryptor) {
+	path := evidence.ContentKeystorePath(dir)
+	if _, err := os.Stat(path); err != nil {
+		return nil, nil
+	}
+	keys, err := evidence.OpenContentKeystore(path)
+	if err != nil {
+		return nil, nil
+	}
+	return keys, content.NewEncryptor(keys)
 }
 
 func indent(s string) string {

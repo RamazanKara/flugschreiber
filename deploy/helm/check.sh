@@ -108,6 +108,12 @@ render full \
   --set config.retentionDays=365 \
   --set config.checkpointInterval=1m \
   --set config.segmentMaxBytes=67108864 \
+  --set config.signer=exec:/usr/bin/pkcs11-sign \
+  --set config.signerPublicKey=/etc/flugschreiber/helper-public-key.pem \
+  --set config.tsaUrl=https://freetsa.org/tsr \
+  --set config.tsaInterval=30m \
+  --set config.retentionMaxBytes=53687091200 \
+  --set config.contentEncryption=true \
   --set config.file.enabled=true \
   --set config.requestTimeout=10m \
   --set config.shutdownTimeout=15s \
@@ -314,6 +320,12 @@ present full 'checkpoint interval as a flag' '- --checkpoint-interval'
 present full 'signing state is stated on the pod' 'name: FLUGSCHREIBER_SIGNING_DISABLED'
 present full 'metrics state is stated on the pod' 'name: FLUGSCHREIBER_METRICS_ENABLED'
 present full 'checkpoint interval in the config file' '"checkpoint_interval": "1m"'
+present full 'external signer reaches the container' 'value: "exec:/usr/bin/pkcs11-sign"'
+present full 'the key the helper must hold reaches the container' 'name: FLUGSCHREIBER_SIGNER_PUBLIC_KEY'
+present full 'timestamping authority reaches the container' 'value: "https://freetsa.org/tsr"'
+present full 'anchoring interval reaches the container' 'name: FLUGSCHREIBER_TSA_INTERVAL'
+present full 'size cap reaches the container' 'name: FLUGSCHREIBER_RETENTION_MAX_BYTES'
+present full 'content encryption reaches the container' 'name: FLUGSCHREIBER_CONTENT_ENCRYPTION'
 
 present sidecar-cronjobs 'verify CronJob renders in sidecar mode' 'name: check-flugschreiber-verify'
 present sidecar-cronjobs 'retention CronJob renders in sidecar mode' 'name: check-flugschreiber-retention'
@@ -327,6 +339,8 @@ present observability 'rule carries the ruleSelector label' 'release: kube-prome
 present observability 'capture-errors alert present' 'alert: FlugschreiberCaptureErrors'
 present observability 'archive-failure alert present' 'alert: FlugschreiberArchiveUploadFailing'
 present observability 'capture-stall alert present' 'alert: FlugschreiberCaptureStalled'
+present observability 'size-cap alert present' 'alert: FlugschreiberEvidenceOverSizeCap'
+present observability 'anchoring alert present' 'alert: FlugschreiberTimestampAnchoringFailing'
 # The alert annotations use Prometheus templating, which Helm must pass through
 # untouched rather than evaluate as its own.
 present observability 'prometheus templating survives helm rendering' '{{ $labels.instance }}'
@@ -350,6 +364,26 @@ env_is signing-off FLUGSCHREIBER_SIGNING_DISABLED true
 env_is signing-off FLUGSCHREIBER_METRICS_ENABLED false
 env_is minimal FLUGSCHREIBER_SIGNING_DISABLED false
 env_is minimal FLUGSCHREIBER_METRICS_ENABLED true
+env_is full FLUGSCHREIBER_TSA_INTERVAL 30m
+env_is full FLUGSCHREIBER_RETENTION_MAX_BYTES 53687091200
+
+# The custody settings are absent by default rather than rendered empty, so that
+# a pod spec says what is configured instead of listing every knob that is not.
+absent() {
+  file=$1
+  what=$2
+  pattern=$3
+  if grep -Fq -e "$pattern" "$out/$file.yaml" 2>/dev/null; then
+    printf '  FAIL  %s: %s is in %s.yaml and should not be\n' "$what" "$pattern" "$file"
+    fail=1
+  else
+    printf '  ok    %s\n' "$what"
+  fi
+}
+
+absent minimal 'no signer is rendered when none is set' 'FLUGSCHREIBER_SIGNER'
+absent minimal 'no anchoring is rendered when none is set' 'FLUGSCHREIBER_TSA_URL'
+absent minimal 'no size cap is rendered when none is set' 'FLUGSCHREIBER_RETENTION_MAX_BYTES' 
 
 echo
 echo "the shipped dashboard matches the canonical one"

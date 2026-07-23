@@ -154,9 +154,17 @@ func TestOversightAndExportEndToEnd(t *testing.T) {
 		if err := os.MkdirAll(extracted, 0o750); err != nil {
 			t.Fatal(err)
 		}
+		// The bundle's tree is preserved rather than flattened. Retired public
+		// keys live under keys/, and a recipient who flattened them would find
+		// a directory that fails to verify after any rotation, for a reason
+		// nothing in the output would explain.
 		for name, bodyText := range files {
-			base := filepath.Base(name)
-			if err := os.WriteFile(filepath.Join(extracted, base), []byte(bodyText), 0o600); err != nil {
+			rel := strings.TrimPrefix(name, "flugschreiber-evidence/")
+			dst := filepath.Join(extracted, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dst, []byte(bodyText), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}

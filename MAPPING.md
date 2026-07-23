@@ -12,8 +12,6 @@ appropriateness. Nothing here is legal advice.
 Schema version: **1**. See [docs/SCHEMA.md](docs/SCHEMA.md) for the
 compatibility policy.
 
----
-
 ## Article 12: record-keeping
 
 > High-risk AI systems shall technically allow for the automatic recording of
@@ -36,8 +34,6 @@ change, model replacement. Flugschreiber sees the API boundary. Changes to
 prompts, retrieval corpora, tool definitions and thresholds happen elsewhere and
 have to be recorded elsewhere.
 
----
-
 ## Article 19: automatically generated logs
 
 > Providers shall keep the logs ... for a period appropriate to the intended
@@ -48,12 +44,16 @@ have to be recorded elsewhere.
 | Append-only JSONL segments | Records are only ever appended; nothing rewrites a written line | Enforced by the writer, not by the filesystem. Use append-only or object-lock storage if you need this enforced below the application. |
 | `prev_hash` / `record_hash` | SHA-256 chain over every record | Detects modification, insertion and deletion. Does **not** prove authorship on its own; see below. |
 | `checkpoints.jsonl` | Ed25519-signed attestations of the chain head, written on rotation, on a timer and at shutdown | Only as strong as the custody of `signing-key.pem`. A key stored beside the evidence protects against much less than a key stored elsewhere. |
-| `public-key.pem` | Lets any third party check those signatures | Standard PKIX, readable with openssl. Always included in an export. |
+| `public-key.pem`, `keys/retired-*.pem` | Lets any third party check those signatures, including after a key rotation | Standard PKIX, readable with openssl. Both the active and every retired public key are included in an export, because a rotation that stranded old checkpoints would destroy evidence. |
 | `retention_days` with a 180-day floor | Refuses to start below six months, and enforces deletion on request | Deletion removes whole segments only, oldest first, and only when every record in them is beyond retention. |
 | `pruned.json` | Records what retention deleted and where the surviving chain begins | A pruned log verifies as *pruned*, never as intact from the beginning. |
-| `LEGAL_HOLD` | Blocks all deletion while present | Checked at enforcement time, not cached. Its contents are the stated reason. |
+| `timestamps.jsonl` | RFC 3161 tokens anchoring checkpoints to a timestamping authority | Flugschreiber checks that a token covers the checkpoint it is filed against. It does not validate the authority's signature or certificate chain; which authorities count is your policy decision, and `VERIFY.md` gives the openssl command. |
+| `retention_max_bytes` | A size cap on the evidence directory, reported and never enforced by deletion | It never overrides the six-month floor. Over the cap with everything inside retention means the tool refuses to delete and says so. Adding storage is the answer; the tool will not make that trade for you. |
+| External signer (`signer: exec:...`) | Checkpoint signing delegated to a process that holds the key elsewhere, such as a smartcard or an HSM | Moves the security boundary off the host that holds the evidence. The proxy still has to be told which public key to expect, or a helper signing with the wrong key would go unnoticed. |
+| `LEGAL_HOLD` | Blocks all deletion while present | Checked at enforcement time, not cached. Its contents are the stated reason. Erasure is blocked by it too. |
+| Content encryption plus `erase` | Destroys the key that opens one session's stored content, and records the erasure in the chain | This is how a GDPR Article 17 request is answered without deleting AI Act evidence. The record stays byte for byte and keeps verifying; what goes is the ability to read the text. The digests remain as claims that can no longer be re-proven, and every renderer says so. |
 | Segment rotation | Bounded files, chain continues across boundaries | |
-| S3 archival of sealed segments | Ships rotated segments to object storage, with optional Object Lock | Archival, not the write path. S3 cannot append, so the local segment is always primary. |
+| S3 archival of sealed segments | Ships rotated segments, the checkpoints, the anchors and every public key to object storage, with optional Object Lock | Archival, not the write path. S3 cannot append, so the local segment is always primary. `pruned.json` and `LEGAL_HOLD` stay on the host, so a directory restored from the archive alone is verifiable but is not a complete evidence directory. `flugschreiber archive-verify` reports which parts it could and could not check. |
 
 Where this runs out, and this is the one to read carefully. The hash chain proves the log
 is internally consistent. On its own it does not prove who wrote it: someone with
@@ -71,8 +71,6 @@ What remains: an attacker who holds the signing key can forge everything. So the
 key's custody is the security boundary. Keep it off the host that holds the
 evidence where you can, put segments on object-lock storage, and record the chain
 head somewhere the proxy cannot reach. `SECURITY.md` has the rest.
-
----
 
 ## Article 26: obligations of deployers
 
@@ -93,8 +91,6 @@ relevance, and informing affected persons. Flugschreiber records the
 `human_intervention` event type once you send interventions to its events endpoint, but it
 cannot design or perform oversight.
 
----
-
 ## Article 50: transparency
 
 | Artifact | What it gives you | Caveat |
@@ -109,7 +105,18 @@ marking has to happen where content leaves your system. The guidance note in the
 pack explains the practical options. `request_id` is offered as the key that
 ties a marked artefact back to the evidence log.
 
----
+## Article 73: serious incident reporting
+
+| Field | What it records | Caveat |
+| --- | --- | --- |
+| `incident` event, `severity` | A human's conclusion that something went wrong, at one of `suspected`, `serious`, `resolved`, written into the chain through the authenticated events endpoint | Records that an incident was noticed and how serious someone judged it. It is not the report to the authority, and Flugschreiber does not decide reportability or track deadlines. |
+| `ref_request_id`, `actor` | Which interaction the incident concerns and who reported it | The link is only as good as the request id the reporter supplies. |
+
+Where this runs out: Article 73 sets reporting obligations and timelines that are
+a human and legal process. The incident record is the durable, tamper-evident
+note that the process can point back to; the report's post-market section
+pre-fills the incidents observed, and marks the reporting decision itself as a
+TODO for a person.
 
 ## Annex IV: technical documentation
 
@@ -128,8 +135,6 @@ sentence on what belongs there.
 | 7. Harmonised standards | No. |
 | 8. Declaration of conformity | No. |
 | 9. Post-market monitoring | No. The evidence log is an input to the plan, not the plan. |
-
----
 
 ## What Flugschreiber structurally cannot see
 

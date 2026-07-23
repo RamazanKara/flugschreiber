@@ -151,6 +151,34 @@
           "type": "boolean",
           "description": "False keeps checkpoint signing on, which is what makes the log resist a rewrite by whoever can write to the evidence volume. True leaves the hash chain, which detects any edit that is not a rewrite of everything after it, and that rewrite is precisely what such a person can do."
         },
+        "signer": {
+          "type": "string",
+          "pattern": "^$|^exec:.+$",
+          "description": "Sign checkpoints through an external helper, as exec:<command>, so the private key never has to sit on the evidence volume. Needs signerPublicKey."
+        },
+        "signerPublicKey": {
+          "type": "string",
+          "description": "Path in the container to the PEM public key the helper holds. The proxy refuses a signature that does not verify against it, at startup rather than in an audit."
+        },
+        "tsaUrl": {
+          "type": "string",
+          "pattern": "^$|^https?://.+$",
+          "description": "RFC 3161 timestamping authority. Anchoring turns a checkpoint's time from this pod's clock into a third party's claim. The pod needs egress to it; an authority that is down costs anchors and never records."
+        },
+        "tsaInterval": {
+          "type": "string",
+          "pattern": "^$|^[0-9]+(ns|us|ms|s|m|h)$",
+          "description": "How often to anchor a checkpoint. Empty uses the binary's one hour default. An authority is somebody else's rate-limited service, so this is deliberately not the checkpoint interval."
+        },
+        "retentionMaxBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Size cap on the evidence directory. It reports and never deletes: the retention floor wins, so being over the cap with everything inside retention is a capacity ticket rather than a deletion."
+        },
+        "contentEncryption": {
+          "type": "boolean",
+          "description": "Encrypt stored content at rest so an erasure request can destroy the key rather than the chain. Only meaningful with contentMode store or redact."
+        },
         "logLevel": {
           "type": "string",
           "enum": [

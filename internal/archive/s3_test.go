@@ -24,7 +24,10 @@ import (
 	"time"
 )
 
-var _ Archiver = (*Client)(nil)
+var (
+	_ Archiver = (*Client)(nil)
+	_ Getter   = (*Client)(nil)
+)
 
 const (
 	testBucket    = "flugschreiber-evidence"
@@ -197,6 +200,100 @@ func TestAKeyThatNeedsEscapingIsSentAndSignedIdentically(t *testing.T) {
 	}
 	if want := "/" + testBucket + "/prod%202026/seg%2B00000001%24a.jsonl"; path != want {
 		t.Errorf("escaped path = %q, want %q", path, want)
+	}
+}
+
+// TestGetSignsTheRequestAndStreamsTheObjectBack is the read half of the deep
+// archive check: a correctly signed S3 GET whose response body is the object,
+// signed through the same path as PUT and HEAD with the empty-payload hash.
+func TestGetSignsTheRequestAndStreamsTheObjectBack(t *testing.T) {
+	body := []byte(strings.Repeat(`{"seq":1,"record_hash":"abc"}`+"\n", 100))
+
+	var seen struct {
+		method, path string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		verifySignature(t, r, EmptyPayloadSHA256)
+		seen.method = r.Method
+		seen.path = r.URL.EscapedPath()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	c := newTestS3(t, srv.URL, srv.Client(), nil)
+	rc, err := c.Get(context.Background(), "seg-00000001.jsonl")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read the object body: %v", err)
+	}
+
+	if seen.method != http.MethodGet {
+		t.Errorf("method = %s, want GET", seen.method)
+	}
+	if want := "/" + testBucket + "/seg-00000001.jsonl"; seen.path != want {
+		t.Errorf("path = %q, want %q", seen.path, want)
+	}
+	if !bytes.Equal(got, body) {
+		t.Error("Get returned bytes that are not the ones the store served")
+	}
+}
+
+// The signed GET carries the prefix on its key exactly as PUT and HEAD do, so a
+// deep check reads back the object a prefixed upload wrote.
+func TestGetAppliesThePrefixAndSignsTheKey(t *testing.T) {
+	const key = "prod 2026/seg+00000001$a.jsonl"
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		verifySignature(t, r, EmptyPayloadSHA256)
+		path = r.URL.EscapedPath()
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "x")
+	}))
+	defer srv.Close()
+
+	c := newTestS3(t, srv.URL, srv.Client(), func(cfg *Config) { cfg.Prefix = "flugschreiber/" })
+	rc, err := c.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer rc.Close()
+	if _, err := io.Copy(io.Discard, rc); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if want := "/" + testBucket + "/flugschreiber/prod%202026/seg%2B00000001%24a.jsonl"; path != want {
+		t.Errorf("escaped path = %q, want %q", path, want)
+	}
+}
+
+// A 404 is an object the archive does not hold, which a deep check reports as a
+// gap through ErrNotFound rather than as an opaque HTTP error.
+func TestGetReportsAMissingObjectAsNotFound(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := newTestS3(t, srv.URL, srv.Client(), nil)
+	rc, err := c.Get(context.Background(), "seg-00000001.jsonl")
+	if rc != nil {
+		rc.Close()
+		t.Fatal("Get returned a reader for an object the store does not hold")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get on a 404 = %v, want it to wrap ErrNotFound", err)
+	}
+	// A 404 is the bucket's decision, not a hiccup, so it is not retried.
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("a missing object was fetched %d times, want 1", got)
 	}
 }
 

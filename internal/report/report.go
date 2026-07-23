@@ -46,9 +46,15 @@ type Input struct {
 	ContentMode    string
 	RedactPatterns []string
 	RetentionDays  int
-	DataDir        string
-	Version        string
-	Now            time.Time
+
+	// RetentionMaxBytes is the configured size cap, or zero when there is none.
+	// It is documented because an operator reading the technical documentation
+	// needs to know that a cap exists and that it does not delete early.
+	RetentionMaxBytes int64
+
+	DataDir string
+	Version string
+	Now     time.Time
 
 	// Lang selects which language editions to produce: "en", "de", or "both".
 	// Empty means both, which is the historical behaviour.
@@ -265,7 +271,28 @@ func funcs() template.FuncMap {
 			return s
 		},
 		"months": func(days int) string { return fmt.Sprintf("%.1f", float64(days)/30.0) },
+		// bytes renders a size the way an operator sizing a disk reads it. The
+		// exact byte count is kept alongside the rounded figure, because a
+		// retention argument is sometimes about the exact number.
+		"bytes": humanBytes,
 	}
+}
+
+// humanBytes renders a byte count in binary units, with the exact count in
+// brackets from a kibibyte upwards.
+func humanBytes(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d bytes", n)
+	}
+	value, unit := float64(n), ""
+	for _, u := range []string{"KiB", "MiB", "GiB", "TiB"} {
+		value /= 1024
+		unit = u
+		if value < 1024 {
+			break
+		}
+	}
+	return fmt.Sprintf("%.1f %s (%d bytes)", value, unit, n)
 }
 
 func percentString(part, total int) string {

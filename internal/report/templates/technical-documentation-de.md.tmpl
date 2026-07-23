@@ -27,8 +27,6 @@ Erstellt von Flugschreiber {{ .Version }} am {{ stamp .Now }} aus beobachtetem V
 | Erfasste Aufzeichnungen | {{ $s.Records }} ({{ $s.Inference }} Inferenz-Ereignisse) |
 | Integrität | {{ if $s.ChainVerified }}Hash-Kette als unversehrt geprüft{{ else }}**PRÜFUNG FEHLGESCHLAGEN, siehe Abschnitt 3.4**{{ end }} |
 
----
-
 ## 1. Allgemeine Beschreibung des KI-Systems
 
 ### 1.1 Zweckbestimmung
@@ -89,8 +87,6 @@ aufgezeichnet, die der Aufrufer erhalten hat.
 
 {{ todo "Geben Sie an, wie das System bereitgestellt wird (Container, Kubernetes, VM), auf welcher Hardware es läuft und in welcher Jurisdiktion diese Hardware steht. Läuft die Inferenz auf Infrastruktur, die Sie nicht kontrollieren, benennen Sie den Betreiber." }}
 
----
-
 ## 2. Bestandteile des Systems und Entwicklungsprozess
 
 ### 2.1 Verwendete Generierungsparameter
@@ -140,8 +136,6 @@ Im Nachweiszeitraum wurden keine Werkzeug- oder Funktionsaufrufe beobachtet.
 {{ todo "Beschreiben Sie, wie das System gebaut wurde und wie Änderungen daran geprüft und ausgeliefert werden. Verweisen Sie auf Ihr Repository, Ihre CI-Pipeline und Ihren Release-Prozess, statt sie zu wiederholen." }}
 
 {{ todo "Beschreiben Sie die vor dem Einsatz durchgeführten Tests und ihre Ergebnisse." }}
-
----
 
 ## 3. Überwachung, Funktionsweise und Kontrolle
 
@@ -193,11 +187,29 @@ Leitung gingen. Genau das erlaubt es, ein andernorts gehaltenes Transkript als d
 Transkript der Interaktion nachzuweisen, die dieses Protokoll bezeugt, selbst wenn das
 Protokoll selbst keinen Text enthält.
 
+{{ if or (gt $s.Encrypted 0) (gt $s.Erased 0) -}}
+*Beobachtet.* Gespeicherte Inhalte sind ruhend verschlüsselt.
+{{ if gt $s.Encrypted 0 }}{{ $s.Encrypted }} Aufzeichnung(en) tragen versiegelte Inhalte, die mit dem Inhaltsschlüsselspeicher weiterhin lesbar sind.{{ end }}
+{{ if gt $s.Erased 0 }}Bei {{ $s.Erased }} Aufzeichnung(en) wurde der Inhalt gelöscht: Der Schlüssel, der sie öffnete, wurde auf ein Löschersuchen hin vernichtet, die Aufzeichnungen selbst sind unverändert, und die Kette über ihnen verifiziert weiterhin.{{ end }}
+
+Eine Löschung schreibt niemals eine Aufzeichnung um, und genau das hält die Kette durch
+ein Ersuchen nach Artikel 17 DSGVO hindurch unversehrt. {{ if gt $s.Erased 0 }}Beachten Sie,
+was die verbleibenden Prüfsummen danach wert sind: SHA-256 und Bytezahl sind unverändert
+und wurden bei der Interaktion aufgezeichnet, doch mit vernichtetem Inhalt kann sie
+niemand mehr aus diesem neu berechnen. Sie stehen damit als Behauptung, die sich nicht
+mehr belegen lässt. Das ist eine schwächere Aussage als eine ungelöschte Prüfsumme, und
+sie ist die ehrliche.{{ end }}
+
+{{ todo "Halten Sie fest, wer eine Löschung genehmigen darf, wie ein Ersuchen vor der Durchführung geprüft wird und wo die Löschentscheidungen dokumentiert sind. Flugschreiber hält fest, dass Inhalte gelöscht wurden, wann und auf wessen Ersuchen; es entscheidet nicht, ob das Ersuchen berechtigt war." }}
+{{- end }}
+
 {{ todo "Halten Sie fest, warum der gewählte Inhaltsmodus hier angemessen ist und wo die zugehörigen Aufbewahrungs- und Zugriffskontrollen dokumentiert sind." }}
 
 ### 3.3 Aufbewahrung
 
 *Beobachtet.* Konfigurierte Aufbewahrung: **{{ .RetentionDays }} Tage** (~{{ months .RetentionDays }} Monate).
+Nachweise auf der Festplatte: **{{ bytes $s.Bytes }}**{{ if .RetentionMaxBytes }}, gegenüber einer
+konfigurierten Größenobergrenze von {{ bytes .RetentionMaxBytes }}{{ end }}.
 
 Artikel 19 erwartet, dass automatisch erzeugte Protokolle mindestens sechs Monate
 aufbewahrt werden, soweit sie der Kontrolle des Anbieters unterliegen und vorbehaltlich
@@ -217,6 +229,14 @@ Segmente löscht, älteste zuerst, und nur dann, wenn jede Aufzeichnung darin au
 Aufbewahrungszeitraums liegt. Eine Datei `LEGAL_HOLD` im Nachweisverzeichnis blockiert
 jede Löschung, solange sie existiert. Ohne diese beiden ausdrücklichen Schalter löscht
 nichts Nachweise, ob von einer Person eingegeben oder als Job geplant.
+{{ if .RetentionMaxBytes }}
+Die Größenobergrenze berichtet, sie löscht nicht vorzeitig. Liegt das Verzeichnis über der
+Grenze und ist alles Verbliebene noch innerhalb des Aufbewahrungszeitraums, sagt die
+Durchsetzung das und löscht nichts; die Überschreitung steht als Messwert in
+`flugschreiber_evidence_bytes_over_cap`. Weniger Nachweise aufzubewahren, als die
+Aufbewahrungsuntergrenze verlangt, ist eine Entscheidung für einen Menschen und keine, die
+dieses Werkzeug allein trifft, wenn eine Festplatte volläuft.
+{{- end }}
 
 {{ todo "Halten Sie fest, wo das Nachweisverzeichnis gespeichert ist, wer es lesen kann, wie es gesichert wird und wer oder was die Aufbewahrung in welchem Turnus durchsetzt. Läuft nichts, sammeln sich Aufzeichnungen über den Aufbewahrungszeitraum hinaus an, bis etwas läuft, was eine Frage der Datenminimierung ist, keine des Werkzeugs." }}
 
@@ -234,6 +254,7 @@ Aufzeichnung bricht die Kette an dieser Stelle und an jeder Stelle danach.
 | Signierte Kontrollpunkte | {{ if gt $s.Checkpoints 0 }}{{ $s.Checkpoints }}, davon {{ $s.CheckpointsVerified }} gegen Signatur und Kette geprüft{{ else }}keine aufgezeichnet{{ end }} |
 | Beglaubigung | {{ if $s.Attested }}**beglaubigt**: mindestens eine Ed25519-Kontrollpunktsignatur wurde geprüft und stimmt mit der Kette überein{{ else }}nicht beglaubigt; die Kette zeigt nur innere Widerspruchsfreiheit{{ end }} |
 | Kennung des Signaturschlüssels | {{ if $s.KeyID }}`{{ $s.KeyID }}`{{ else }}keine{{ end }} |
+| Zeitverankerung | {{ if gt $s.Timestamps 0 }}{{ $s.Timestamps }} RFC-3161-Token, davon {{ $s.TimestampedCheckpoints }} passend zum jeweils benannten Kontrollpunkt{{ else }}keine; die Kontrollpunktzeiten sind die Uhr dieses Hosts{{ end }} |
 | Geprüft am | {{ stamp .Now }} |
 
 {{ if not $s.ChainVerified }}
@@ -273,6 +294,15 @@ Das Signieren von Kontrollpunkten ist voreingestellt aktiv; wurde es bewusst abg
 halten Sie fest, warum.
 {{- end }}
 
+{{ if gt $s.Timestamps 0 -}}
+Kontrollpunkte sind bei einer RFC-3161-Zeitstempelstelle verankert, was ihre Zeit von der
+Behauptung dieses Hosts zu der eines Dritten macht. Flugschreiber prüft, dass jedes Token
+den Kontrollpunkt abdeckt, unter dem es abgelegt ist; es prüft weder die Signatur der
+Stelle noch deren Zertifikatskette, denn welche Stellen zählen, ist eine
+Richtlinienentscheidung derjenigen, die prüfen. `VERIFY.md` nennt den openssl-Befehl,
+der diese Prüfung durchführt.
+{{- end }}
+
 {{ todo "Halten Sie fest, was das Nachweisverzeichnis und den Signaturschlüssel schützt: nur-anfügbarer oder mit Object Lock versehener Speicher, Off-Host-Replikation versiegelter Segmente, eingeschränkte Dateisystemrechte und wo der Schlüssel relativ zum Nachweis liegt. Ein neben dem Protokoll aufbewahrter Schlüssel schützt weit weniger als ein anderswo aufbewahrter." }}
 
 ### 3.5 Menschliche Aufsicht
@@ -299,43 +329,42 @@ die dieses Dokument beantworten muss.
 
 {{ todo "Halten Sie die Sicherheitsmaßnahmen rund um den Modell-Endpunkt fest: Authentifizierung, Netzwerkisolierung, Ratenbegrenzung und wie das Risiko von Prompt-Injection behandelt wird, falls das System nicht vertrauenswürdige Eingaben verarbeitet." }}
 
----
-
 ## 4. Angemessenheit der Leistungskennzahlen
 
 {{ todo "Geben Sie an, mit welchen Kennzahlen Sie beurteilen, ob dieses System funktioniert, und warum diese Kennzahlen für die Zweckbestimmung die richtigen sind. Flugschreiber misst Verkehr, Latenz und Token-Verbrauch; keines davon sagt Ihnen, ob die Ausgabe gut war." }}
-
----
 
 ## 5. Risikomanagementsystem (Artikel 9)
 
 {{ todo "Verweisen Sie auf Ihren Risikomanagementprozess: die für diesen Anwendungsfall ermittelten Risiken, die getroffenen Maßnahmen und das akzeptierte Restrisiko. Flugschreiber erzeugt dies bewusst nicht, denn eine generierte Risikobeurteilung wäre schlechter als keine, weil sie wie eine aussähe." }}
 
----
-
 ## 6. Über den Lebenszyklus vorgenommene Änderungen
 
 {{ todo "Halten Sie wesentliche Änderungen am System und ihren Zeitpunkt fest. Änderungen der Modellversion sind in Abschnitt 1.2 sichtbar, wenn sie im Verkehr auftreten; Änderungen an Prompts, Abrufquellen, Werkzeugen und Schwellenwerten sind für Flugschreiber nicht sichtbar und müssen hier festgehalten werden." }}
-
----
 
 ## 7. Angewandte harmonisierte Normen
 
 {{ todo "Führen Sie alle ganz oder teilweise angewandten harmonisierten Normen oder gemeinsamen Spezifikationen auf. Falls keine, sagen Sie das ausdrücklich." }}
 
----
-
 ## 8. EU-Konformitätserklärung
 
 {{ todo "Fügen Sie die Erklärung bei, falls eine für dieses System erforderlich ist. Ist das System nicht hochriskant und keine Erklärung erforderlich, halten Sie das fest und dokumentieren Sie die Begründung, die zu diesem Schluss führte. Die Begründung ist der wertvolle Teil." }}
 
----
+## 9. Beobachtung nach dem Inverkehrbringen und schwerwiegende Vorfälle (Artikel 73)
 
-## 9. Beobachtung nach dem Inverkehrbringen
+{{ if gt $s.Incidents 0 -}}
+*Beobachtet.* {{ $s.Incidents }} Vorfallaufzeichnung(en) wurden im Zeitraum in die
+Nachweiskette geschrieben{{ if $s.BySeverity }}: {{ joinCounts $s.BySeverity }}{{ end }}.
+Jede trägt die meldende Person, den Schweregrad und die betroffene Interaktion, in
+derselben manipulationssicheren Kette wie die Interaktionen selbst.
 
-{{ todo "Beschreiben Sie, wie das System nach dem Einsatz beobachtet wird und wie Vorfälle erkannt, eskaliert und gemeldet werden. Das Nachweisprotokoll ist ein Eingang dafür, nicht der Plan selbst." }}
+{{ todo "Halten Sie für jeden schwerwiegenden Vorfall oben die Meldeentscheidung nach Artikel 73 fest: ob er meldepflichtig war, an welche Behörde und wann. Ein aufgezeichneter Vorfall belegt, dass etwas bemerkt wurde; er ist nicht die Meldung selbst." }}
+{{- else -}}
+Im Zeitraum wurden keine Vorfallaufzeichnungen in die Nachweiskette geschrieben. Vorfälle
+lassen sich über den Events-Endpunkt mit einem Schweregrad von suspected, serious oder
+resolved aufzeichnen.
 
----
+{{ todo "Beschreiben Sie, wie das System nach dem Einsatz beobachtet wird und wie schwerwiegende Vorfälle (Artikel 73) erkannt, eskaliert und gemeldet werden, einschließlich der geltenden Meldefristen. Das Nachweisprotokoll ist ein Eingang dafür, nicht der Plan selbst." }}
+{{- end }}
 
 ## Anhang A: Regulatorischer Zeitplan
 

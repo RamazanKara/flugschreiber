@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-var _ Archiver = (*Dir)(nil)
+var (
+	_ Archiver = (*Dir)(nil)
+	_ Getter   = (*Dir)(nil)
+)
 
 // recorder is a stand-in Archiver for testing the helpers that drive one.
 type recorder struct {
@@ -159,6 +162,64 @@ func TestDirExistsDistinguishesPresentFromAbsent(t *testing.T) {
 	}
 	if ok, err := d.Exists(ctx, "seg-00000001.jsonl"); err != nil || !ok {
 		t.Fatalf("Exists after Put = %v, %v; want true, nil", ok, err)
+	}
+}
+
+// Get is what a deep archive verification reads bytes back through, so a
+// round trip has to return exactly what Put stored.
+func TestDirGetReturnsTheBytesThatWerePut(t *testing.T) {
+	d := newTestDir(t)
+	ctx := context.Background()
+	body := []byte(`{"seq":1,"record_hash":"abc"}` + "\n")
+
+	if err := d.Put(ctx, "2026/seg-00000001.jsonl", bytes.NewReader(body), int64(len(body)), ContentTypeJSONL); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	rc, err := d.Get(ctx, "2026/seg-00000001.jsonl")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("Get returned %q, want %q", got, body)
+	}
+}
+
+// A missing key is a gap in the archive, which a deep check must be able to
+// name as such rather than mistake for an unreadable backend.
+func TestDirGetOnAMissingKeyReportsNotFound(t *testing.T) {
+	d := newTestDir(t)
+	rc, err := d.Get(context.Background(), "seg-00000001.jsonl")
+	if rc != nil {
+		rc.Close()
+		t.Fatal("Get returned a reader for a key that is not in the archive")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get on a missing key = %v, want it to wrap ErrNotFound", err)
+	}
+}
+
+// Get validates the key the same way Put and Exists do, so a bug in the calling
+// code cannot read outside the archive root.
+func TestDirGetRejectsAKeyThatCouldEscapeTheRoot(t *testing.T) {
+	d := newTestDir(t)
+	rc, err := d.Get(context.Background(), "../../etc/passwd")
+	if rc != nil {
+		rc.Close()
+		t.Fatal("Get returned a reader for a traversing key")
+	}
+	if err == nil {
+		t.Fatal("Get accepted a key that escapes the archive root")
+	}
+	// A rejected key is not a not-found: the caller passed something invalid,
+	// which is a different failure from an object that is simply absent.
+	if errors.Is(err, ErrNotFound) {
+		t.Errorf("an invalid key was reported as not-found: %v", err)
 	}
 }
 

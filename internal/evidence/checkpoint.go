@@ -72,6 +72,23 @@ func SignCheckpoint(priv ed25519.PrivateKey, keyID string, c *Checkpoint) error 
 	if len(priv) != ed25519.PrivateKeySize {
 		return fmt.Errorf("evidence: sign checkpoint: key is %d bytes, expected %d", len(priv), ed25519.PrivateKeySize)
 	}
+	pub, _ := priv.Public().(ed25519.PublicKey)
+	return SignCheckpointWith(&KeyPairSigner{kp: &KeyPair{Private: priv, Public: pub, ID: keyID}}, c)
+}
+
+// SignCheckpointWith fills in KeyID and Signature using an arbitrary Signer,
+// which is how an external key custodian signs without the private key ever
+// being in this process.
+//
+// The signature it produces is checked against the signer's own public key
+// before the checkpoint is returned. A helper that answers with the wrong
+// bytes, or signs under a key other than the one it advertises, therefore
+// fails here rather than at the next audit.
+func SignCheckpointWith(s Signer, c *Checkpoint) error {
+	if s == nil {
+		return errors.New("evidence: sign checkpoint: no signer")
+	}
+	keyID := s.KeyID()
 	if keyID == "" {
 		return errors.New("evidence: sign checkpoint: key id is required, a signature nobody can attribute is not evidence")
 	}
@@ -82,7 +99,21 @@ func SignCheckpoint(priv ed25519.PrivateKey, keyID string, c *Checkpoint) error 
 	if err := c.checkFieldSeparators(); err != nil {
 		return err
 	}
-	c.Signature = hex.EncodeToString(ed25519.Sign(priv, CheckpointPreimage(*c)))
+
+	preimage := CheckpointPreimage(*c)
+	sig, err := s.Sign(preimage)
+	if err != nil {
+		return fmt.Errorf("evidence: sign checkpoint at seq %d: %w", c.Seq, err)
+	}
+	if len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("evidence: sign checkpoint at seq %d: signature is %d bytes, expected %d", c.Seq, len(sig), ed25519.SignatureSize)
+	}
+	if pub := s.Public(); len(pub) == ed25519.PublicKeySize && !ed25519.Verify(pub, preimage, sig) {
+		return fmt.Errorf(
+			"evidence: sign checkpoint at seq %d: the signature does not verify against key %s, which the signer says produced it",
+			c.Seq, keyID)
+	}
+	c.Signature = hex.EncodeToString(sig)
 	return nil
 }
 

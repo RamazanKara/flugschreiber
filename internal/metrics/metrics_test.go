@@ -37,6 +37,8 @@ func TestEveryContractedMetricExistsFromTheStart(t *testing.T) {
 		"flugschreiber_checkpoints_total":        "counter",
 		"flugschreiber_archive_uploads_total":    "counter",
 		"flugschreiber_evidence_bytes":           "gauge",
+		"flugschreiber_evidence_bytes_over_cap":  "gauge",
+		"flugschreiber_timestamps_total":         "counter",
 	}
 
 	got := make(map[string]string)

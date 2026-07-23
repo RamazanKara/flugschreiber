@@ -1,13 +1,11 @@
 package evidence
 
 import (
-	"crypto/ed25519"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -164,6 +162,7 @@ const (
 	ProblemCheckpointMismatch = "checkpoint_mismatch"
 	ProblemBadSignature       = "bad_signature"
 	ProblemUnknownKey         = "unknown_key"
+	ProblemBadTimestamp       = "bad_timestamp"
 )
 
 // Severities. High means the log cannot be relied on as it stands. Medium
@@ -201,6 +200,20 @@ type VerifyResult struct {
 	Attested            bool   `json:"attested"`
 	KeyID               string `json:"key_id,omitempty"`
 
+	// RetiredKeys lists the ids of keys that rotation has replaced and that
+	// this directory still holds the public half of. A checkpoint signed under
+	// any of them verifies; the list is reported so that an auditor can see
+	// the custody history rather than infer it.
+	RetiredKeys []string `json:"retired_keys,omitempty"`
+
+	// Timestamps counts the RFC 3161 tokens found, TimestampedCheckpoints
+	// those whose message imprint matched the checkpoint they are filed
+	// against. Neither says anything about who signed a token: that is settled
+	// by validating its CMS signature, which VERIFY.md documents and this
+	// binary deliberately does not attempt.
+	Timestamps             int `json:"timestamps,omitempty"`
+	TimestampedCheckpoints int `json:"timestamped_checkpoints,omitempty"`
+
 	// Notes carry findings that are not integrity failures, such as a log that
 	// verifies but that nothing attests to.
 	Notes []string `json:"notes,omitempty"`
@@ -230,9 +243,10 @@ func Verify(dir string) (*VerifyResult, error) {
 	res := &VerifyResult{Dir: dir}
 
 	anchor := loadAnchorForVerify(dir, res)
-	pub := loadPublicKeyForVerify(dir, res)
-	verifyAnchorSignature(res, anchor, pub)
-	checks := loadCheckpointsForVerify(dir, res, pub)
+	keys := loadKeysForVerify(dir, res)
+	verifyAnchorSignature(res, anchor, keys)
+	checks := loadCheckpointsForVerify(dir, res, keys)
+	verifyTimestamps(dir, res, checks)
 
 	segs, err := Segments(dir)
 	if err != nil {
@@ -393,8 +407,8 @@ func loadAnchorForVerify(dir string, res *VerifyResult) *PruneAnchor {
 	return anchor
 }
 
-func verifyAnchorSignature(res *VerifyResult, anchor *PruneAnchor, pub ed25519.PublicKey) {
-	if anchor == nil || pub == nil {
+func verifyAnchorSignature(res *VerifyResult, anchor *PruneAnchor, keys *KeySet) {
+	if anchor == nil || keys.Len() == 0 {
 		return
 	}
 	if anchor.Signature == "" {
@@ -402,14 +416,15 @@ func verifyAnchorSignature(res *VerifyResult, anchor *PruneAnchor, pub ed25519.P
 			"%s is not signed, so the record of what was deleted rests on the chain linkage alone", PruneAnchorFile))
 		return
 	}
-	if anchor.KeyID != KeyID(pub) {
+	key, ok := keys.signerOf(anchor.KeyID)
+	if !ok {
 		res.Problems = append(res.Problems, Problem{
 			Segment: PruneAnchorFile, Kind: ProblemUnknownKey, Severity: SeverityMedium,
-			Detail: fmt.Sprintf("signed by key %s, but %s holds key %s", anchor.KeyID, PublicKeyFile, KeyID(pub)),
+			Detail: unknownKeyDetail(anchor.KeyID, keys),
 		})
 		return
 	}
-	if err := VerifyPruneAnchorSignature(pub, *anchor); err != nil {
+	if err := VerifyPruneAnchorSignature(key.Public, *anchor); err != nil {
 		res.Problems = append(res.Problems, Problem{
 			Segment: PruneAnchorFile, Kind: ProblemBadSignature, Severity: SeverityHigh,
 			Detail: err.Error(),
@@ -417,23 +432,53 @@ func verifyAnchorSignature(res *VerifyResult, anchor *PruneAnchor, pub ed25519.P
 	}
 }
 
-// loadPublicKeyForVerify reads the key checkpoints are checked against. An
-// unreadable key file is reported rather than noted: corrupting it would
+// loadKeysForVerify reads every key signatures may be checked against: the
+// current one and every key rotation has retired. A key file that exists but
+// cannot be read is reported rather than noted, because corrupting one would
 // otherwise be a way to turn signature checking off and still be told the log
 // is fine.
-func loadPublicKeyForVerify(dir string, res *VerifyResult) ed25519.PublicKey {
-	pub, err := LoadPublicKeyPEM(filepath.Join(dir, PublicKeyFile))
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			res.Problems = append(res.Problems, Problem{
-				Segment: PublicKeyFile, Kind: ProblemUnknownKey, Severity: SeverityMedium,
-				Detail: fmt.Sprintf("%v; no signature could be checked", err),
-			})
-		}
-		return nil
+func loadKeysForVerify(dir string, res *VerifyResult) *KeySet {
+	keys := LoadKeySet(dir)
+	for _, u := range keys.Unreadable {
+		res.Problems = append(res.Problems, Problem{
+			Segment: u.Source, Kind: ProblemUnknownKey, Severity: SeverityMedium,
+			Detail: fmt.Sprintf("%v; no signature could be checked against it", u.Err),
+		})
 	}
-	res.KeyID = KeyID(pub)
-	return pub
+	if current, ok := keys.Current(); ok {
+		res.KeyID = current.ID
+	}
+	res.RetiredKeys = keys.RetiredIDs()
+	return keys
+}
+
+// signerOf resolves the key a signature names. A checkpoint written before key
+// ids were recorded carries none, and is checked against the current key,
+// which is the only one it could have been signed with.
+func (ks *KeySet) signerOf(keyID string) (KnownKey, bool) {
+	if keyID == "" {
+		return ks.Current()
+	}
+	return ks.ByID(keyID)
+}
+
+// unknownKeyDetail says what was looked for and where, because "unknown key"
+// on its own leaves an operator with nowhere to go.
+func unknownKeyDetail(keyID string, keys *KeySet) string {
+	named := keyID
+	if named == "" {
+		named = "no key at all"
+	}
+	held := make([]string, 0, keys.Len())
+	for _, k := range keys.Keys {
+		held = append(held, k.ID)
+	}
+	if len(held) == 0 {
+		return fmt.Sprintf("signed by key %s, and this directory holds no public key to check it with", named)
+	}
+	return fmt.Sprintf(
+		"signed by key %s, which is neither %s nor any retired key in %s/ (this directory holds %s)",
+		named, PublicKeyFile, RetiredKeysDir, strings.Join(held, ", "))
 }
 
 // checkpointSet cross-checks checkpoints against the chain while it is walked,
@@ -446,7 +491,7 @@ type checkpointSet struct {
 	seen   []bool
 }
 
-func loadCheckpointsForVerify(dir string, res *VerifyResult, pub ed25519.PublicKey) *checkpointSet {
+func loadCheckpointsForVerify(dir string, res *VerifyResult, keys *KeySet) *checkpointSet {
 	cs := &checkpointSet{bySeq: map[uint64][]int{}}
 
 	list, err := ReadCheckpoints(dir)
@@ -464,28 +509,108 @@ func loadCheckpointsForVerify(dir string, res *VerifyResult, pub ed25519.PublicK
 
 	for i, c := range list {
 		cs.bySeq[c.Seq] = append(cs.bySeq[c.Seq], i)
-		switch {
-		case pub == nil:
+		if keys.Len() == 0 {
 			// Nothing to check against; reported once in finish.
-		case c.KeyID != "" && c.KeyID != KeyID(pub):
+			continue
+		}
+		key, ok := keys.signerOf(c.KeyID)
+		if !ok {
 			res.Problems = append(res.Problems, Problem{
 				Segment: CheckpointsFile, Line: i + 1, Seq: c.Seq,
 				Kind: ProblemUnknownKey, Severity: SeverityMedium,
-				Detail: fmt.Sprintf("signed by key %s, but %s holds key %s", c.KeyID, PublicKeyFile, KeyID(pub)),
+				Detail: unknownKeyDetail(c.KeyID, keys),
 			})
-		default:
-			if err := VerifyCheckpointSignature(pub, c); err != nil {
-				res.Problems = append(res.Problems, Problem{
-					Segment: CheckpointsFile, Line: i + 1, Seq: c.Seq,
-					Kind: ProblemBadSignature, Severity: SeverityHigh,
-					Detail: err.Error(),
-				})
-				continue
-			}
-			cs.signed[i] = true
+			continue
 		}
+		if err := VerifyCheckpointSignature(key.Public, c); err != nil {
+			res.Problems = append(res.Problems, Problem{
+				Segment: CheckpointsFile, Line: i + 1, Seq: c.Seq,
+				Kind: ProblemBadSignature, Severity: SeverityHigh,
+				Detail: err.Error(),
+			})
+			continue
+		}
+		cs.signed[i] = true
 	}
 	return cs
+}
+
+// verifyTimestamps checks the RFC 3161 anchors against the checkpoints they
+// are filed against.
+//
+// The check is structural and its limits are the point: it establishes that a
+// token covers the same bytes as the checkpoint it sits beside, which is what
+// makes the anchor about this log rather than about some other one. It does
+// not validate the authority's signature, so a token that cannot be parsed is
+// a note rather than a problem, while a token that parses and contradicts its
+// checkpoint is a problem, because that is a claim about this log that is
+// demonstrably wrong.
+func verifyTimestamps(dir string, res *VerifyResult, checks *checkpointSet) {
+	stamps, err := ReadTimestamps(dir)
+	if err != nil {
+		res.Problems = append(res.Problems, Problem{
+			Segment: TimestampsFile, Kind: ProblemBadTimestamp, Severity: SeverityMedium,
+			Detail: err.Error(),
+		})
+		return
+	}
+	res.Timestamps = len(stamps)
+
+	for i, ts := range stamps {
+		line := i + 1
+		covered, ok := checks.checkpointAt(ts.Seq)
+		if !ok {
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"%s line %d anchors a checkpoint at seq %d that %s does not hold",
+				TimestampsFile, line, ts.Seq, CheckpointsFile))
+			continue
+		}
+		if covered.RecordHash != ts.RecordHash {
+			res.Problems = append(res.Problems, Problem{
+				Segment: TimestampsFile, Line: line, Seq: ts.Seq,
+				Kind: ProblemBadTimestamp, Severity: SeverityMedium,
+				Detail: fmt.Sprintf(
+					"anchors record_hash %s, but the checkpoint at seq %d attests %s",
+					short(ts.RecordHash), ts.Seq, short(covered.RecordHash)),
+			})
+			continue
+		}
+		// The line between a note and a problem here is what this build can
+		// read. A token it cannot parse is its own limitation and says nothing
+		// about the log; a token it can parse that covers other bytes is a
+		// claim about this log that is wrong.
+		token, err := ts.Token()
+		var info *TimestampInfo
+		if err == nil {
+			info, err = ParseTimestampToken(token)
+		}
+		if err != nil {
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"%s line %d could not be checked: %v", TimestampsFile, line, err))
+			continue
+		}
+		if !strings.EqualFold(info.Imprint, ts.RecordHash) {
+			res.Problems = append(res.Problems, Problem{
+				Segment: TimestampsFile, Line: line, Seq: ts.Seq,
+				Kind: ProblemBadTimestamp, Severity: SeverityMedium,
+				Detail: fmt.Sprintf(
+					"the token covers %s, but it is filed against record_hash %s; it anchors a different record",
+					short(info.Imprint), short(ts.RecordHash)),
+			})
+			continue
+		}
+		res.TimestampedCheckpoints++
+	}
+}
+
+// checkpointAt returns the checkpoint covering a sequence number. Several
+// checkpoints may name one sequence when a store was restarted, and they agree
+// unless the log was rewritten, which the chain cross-check reports on its own.
+func (cs *checkpointSet) checkpointAt(seq uint64) (Checkpoint, bool) {
+	for _, i := range cs.bySeq[seq] {
+		return cs.all[i], true
+	}
+	return Checkpoint{}, false
 }
 
 // match compares rec against any checkpoint that claims to cover it. A

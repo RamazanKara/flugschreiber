@@ -287,3 +287,80 @@ func TestEventsEndpointRejectsNonPost(t *testing.T) {
 		t.Error("GET on the events endpoint was accepted")
 	}
 }
+
+// Article 73 incident records go through the same authenticated endpoint and
+// the same forgery protections: a token is required, and an incident cannot
+// masquerade as an inference record.
+func TestIncidentIsRecordedWithSeverity(t *testing.T) {
+	h := eventsHarness(t)
+	resp := h.postEvent(`{
+		"event_type": "incident",
+		"session_id": "sess-9",
+		"ref_request_id": "req-abc",
+		"actor": "dpo@muster.example",
+		"severity": "serious",
+		"note": "Model produced defamatory output about a named individual."
+	}`, testToken)
+	body := drain(t, resp)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+
+	events := h.events()
+	if len(events) != 1 {
+		t.Fatalf("recorded %d events, want 1", len(events))
+	}
+	e := events[0]
+	if e.EventType != evidence.EventIncident {
+		t.Errorf("EventType = %q", e.EventType)
+	}
+	if e.Severity != evidence.SeveritySerious {
+		t.Errorf("Severity = %q, want serious", e.Severity)
+	}
+	if e.Actor == "" || e.RefRequestID != "req-abc" {
+		t.Errorf("incident = %+v", e)
+	}
+}
+
+func TestIncidentValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"incident without actor", `{"event_type":"incident","severity":"serious"}`, "actor is required"},
+		{"incident without severity", `{"event_type":"incident","actor":"a"}`, "severity is required"},
+		{"unrecognised severity", `{"event_type":"incident","actor":"a","severity":"catastrophic"}`, "not recognised"},
+		{"severity on a non-incident", `{"event_type":"system_event","severity":"serious","note":"x"}`, "only be set on an incident"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := eventsHarness(t)
+			resp := h.postEvent(tc.body, testToken)
+			body := drain(t, resp)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", resp.StatusCode, body)
+			}
+			if !strings.Contains(body, tc.want) {
+				t.Errorf("error %q does not mention %q", body, tc.want)
+			}
+			if events := h.events(); len(events) != 0 {
+				t.Error("an invalid incident was recorded")
+			}
+		})
+	}
+}
+
+// An incident is a statement about a human's conclusion, so it may not be used
+// to inject a fabricated model interaction any more than an intervention can.
+func TestIncidentCannotForgeInference(t *testing.T) {
+	h := eventsHarness(t)
+	resp := h.postEvent(`{"event_type":"inference","severity":"serious","actor":"a"}`, testToken)
+	body := drain(t, resp)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", resp.StatusCode, body)
+	}
+	if events := h.events(); len(events) != 0 {
+		t.Fatal("a forged inference record was written through the incident path")
+	}
+}

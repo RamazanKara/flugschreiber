@@ -22,11 +22,9 @@ Erstellt von Flugschreiber v0.1.0-test am 2026-05-04T09:00:00Z aus beobachtetem 
 | Rolle nach der KI-Verordnung | deployer |
 | Umgebung | production |
 | Ansprechstelle | ai-governance@muster.example |
-| Nachweiszeitraum | 2026-05-04T08:31:00Z to 2026-05-04T08:36:00Z |
-| Erfasste Aufzeichnungen | 6 (5 Inferenz-Ereignisse) |
+| Nachweiszeitraum | 2026-05-04T08:31:00Z to 2026-05-04T08:37:00Z |
+| Erfasste Aufzeichnungen | 7 (5 Inferenz-Ereignisse) |
 | Integrität | Hash-Kette als unversehrt geprüft |
-
----
 
 ## 1. Allgemeine Beschreibung des KI-Systems
 
@@ -75,8 +73,6 @@ aufgezeichnet, die der Aufrufer erhalten hat.
 
 > **TODO:** Geben Sie an, wie das System bereitgestellt wird (Container, Kubernetes, VM), auf welcher Hardware es läuft und in welcher Jurisdiktion diese Hardware steht. Läuft die Inferenz auf Infrastruktur, die Sie nicht kontrollieren, benennen Sie den Betreiber.
 
----
-
 ## 2. Bestandteile des Systems und Entwicklungsprozess
 
 ### 2.1 Verwendete Generierungsparameter
@@ -111,8 +107,6 @@ Vom Modell tatsächlich aufgerufene Werkzeuge: lookup_order (1).
 
 > **TODO:** Beschreiben Sie die vor dem Einsatz durchgeführten Tests und ihre Ergebnisse.
 
----
-
 ## 3. Überwachung, Funktionsweise und Kontrolle
 
 ### 3.1 Protokollierung (Artikel 12 und Artikel 19)
@@ -122,7 +116,7 @@ hash-verkettetes Ereignis auf. Im Nachweiszeitraum erfasste es:
 
 | Größe | Wert |
 | --- | --- |
-| Aufzeichnungen gesamt | 6 |
+| Aufzeichnungen gesamt | 7 |
 | Inferenz-Ereignisse | 5 |
 | Verschiedene aufrufende Identitäten | 3 (als gesalzene Hashes gespeichert, nicht als Zugangsdaten) |
 | Verschiedene Sitzungen | 3 |
@@ -131,7 +125,7 @@ hash-verkettetes Ereignis auf. Im Nachweiszeitraum erfasste es:
 | Completion-Token | 432 |
 | Mediane Ende-zu-Ende-Latenz | 812.4 ms |
 | 95. Perzentil der Latenz | 2240.9 ms |
-| Aufgezeichnete Ereignistypen | inference (5), human_intervention (1) |
+| Aufgezeichnete Ereignistypen | inference (5), human_intervention (1), incident (1) |
 | HTTP-Statuscodes | 200 (4), 503 (1) |
 | Abschlussgründe | stop (2), tool_calls (1) |
 
@@ -168,6 +162,7 @@ Protokoll selbst keinen Text enthält.
 ### 3.3 Aufbewahrung
 
 *Beobachtet.* Konfigurierte Aufbewahrung: **180 Tage** (~6.0 Monate).
+Nachweise auf der Festplatte: **5.4 KiB (5523 bytes)**.
 
 Artikel 19 erwartet, dass automatisch erzeugte Protokolle mindestens sechs Monate
 aufbewahrt werden, soweit sie der Kontrolle des Anbieters unterliegen und vorbehaltlich
@@ -192,10 +187,11 @@ Aufzeichnung bricht die Kette an dieser Stelle und an jeder Stelle danach.
 | --- | --- |
 | Prüfergebnis | **unversehrt**, jeder Aufzeichnungs-Hash und jede Verkettung geprüft |
 | Segmente | 1 (seg-00000001.jsonl) |
-| Hash des Kettenkopfs | `ab3616607f5bf3c8f3b747fa7c41212922992ac81444a70bf4401977cef87943` |
+| Hash des Kettenkopfs | `3e71b916cb2ea651eae4e13a9f696884ca979c65c53dea8915a5f710b0aca36f` |
 | Signierte Kontrollpunkte | 1, davon 1 gegen Signatur und Kette geprüft |
 | Beglaubigung | **beglaubigt**: mindestens eine Ed25519-Kontrollpunktsignatur wurde geprüft und stimmt mit der Kette überein |
 | Kennung des Signaturschlüssels | `9a82517f9af19416` |
+| Zeitverankerung | keine; die Kontrollpunktzeiten sind die Uhr dieses Hosts |
 | Geprüft am | 2026-05-04T09:00:00Z |
 
 Jede Person kann diese Prüfung gegen das Nachweisverzeichnis erneut ausführen mit:
@@ -229,43 +225,34 @@ derselben manipulationssicheren Kette wie die Interaktionen selbst.
 
 > **TODO:** Halten Sie die Sicherheitsmaßnahmen rund um den Modell-Endpunkt fest: Authentifizierung, Netzwerkisolierung, Ratenbegrenzung und wie das Risiko von Prompt-Injection behandelt wird, falls das System nicht vertrauenswürdige Eingaben verarbeitet.
 
----
-
 ## 4. Angemessenheit der Leistungskennzahlen
 
 > **TODO:** Geben Sie an, mit welchen Kennzahlen Sie beurteilen, ob dieses System funktioniert, und warum diese Kennzahlen für die Zweckbestimmung die richtigen sind. Flugschreiber misst Verkehr, Latenz und Token-Verbrauch; keines davon sagt Ihnen, ob die Ausgabe gut war.
-
----
 
 ## 5. Risikomanagementsystem (Artikel 9)
 
 > **TODO:** Verweisen Sie auf Ihren Risikomanagementprozess: die für diesen Anwendungsfall ermittelten Risiken, die getroffenen Maßnahmen und das akzeptierte Restrisiko. Flugschreiber erzeugt dies bewusst nicht, denn eine generierte Risikobeurteilung wäre schlechter als keine, weil sie wie eine aussähe.
 
----
-
 ## 6. Über den Lebenszyklus vorgenommene Änderungen
 
 > **TODO:** Halten Sie wesentliche Änderungen am System und ihren Zeitpunkt fest. Änderungen der Modellversion sind in Abschnitt 1.2 sichtbar, wenn sie im Verkehr auftreten; Änderungen an Prompts, Abrufquellen, Werkzeugen und Schwellenwerten sind für Flugschreiber nicht sichtbar und müssen hier festgehalten werden.
-
----
 
 ## 7. Angewandte harmonisierte Normen
 
 > **TODO:** Führen Sie alle ganz oder teilweise angewandten harmonisierten Normen oder gemeinsamen Spezifikationen auf. Falls keine, sagen Sie das ausdrücklich.
 
----
-
 ## 8. EU-Konformitätserklärung
 
 > **TODO:** Fügen Sie die Erklärung bei, falls eine für dieses System erforderlich ist. Ist das System nicht hochriskant und keine Erklärung erforderlich, halten Sie das fest und dokumentieren Sie die Begründung, die zu diesem Schluss führte. Die Begründung ist der wertvolle Teil.
 
----
+## 9. Beobachtung nach dem Inverkehrbringen und schwerwiegende Vorfälle (Artikel 73)
 
-## 9. Beobachtung nach dem Inverkehrbringen
+*Beobachtet.* 1 Vorfallaufzeichnung(en) wurden im Zeitraum in die
+Nachweiskette geschrieben: serious (1).
+Jede trägt die meldende Person, den Schweregrad und die betroffene Interaktion, in
+derselben manipulationssicheren Kette wie die Interaktionen selbst.
 
-> **TODO:** Beschreiben Sie, wie das System nach dem Einsatz beobachtet wird und wie Vorfälle erkannt, eskaliert und gemeldet werden. Das Nachweisprotokoll ist ein Eingang dafür, nicht der Plan selbst.
-
----
+> **TODO:** Halten Sie für jeden schwerwiegenden Vorfall oben die Meldeentscheidung nach Artikel 73 fest: ob er meldepflichtig war, an welche Behörde und wann. Ein aufgezeichneter Vorfall belegt, dass etwas bemerkt wurde; er ist nicht die Meldung selbst.
 
 ## Anhang A: Regulatorischer Zeitplan
 
@@ -286,8 +273,8 @@ aufgeschoben.
 
 ## Anhang B: Wie dieses Dokument entstanden ist
 
-Flugschreiber las 6 Aufzeichnungen aus `/var/lib/flugschreiber`, umfassend
-2026-05-04T08:31:00Z to 2026-05-04T08:36:00Z, prüfte die Hash-Kette und befüllte jeden Abschnitt, den es mit
+Flugschreiber las 7 Aufzeichnungen aus `/var/lib/flugschreiber`, umfassend
+2026-05-04T08:31:00Z to 2026-05-04T08:37:00Z, prüfte die Hash-Kette und befüllte jeden Abschnitt, den es mit
 beobachteten Nachweisen stützen konnte. Abschnitte, die es nicht stützen konnte, sind mit
 **TODO** gekennzeichnet, statt geraten zu werden.
 

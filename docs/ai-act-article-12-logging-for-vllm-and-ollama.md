@@ -175,8 +175,12 @@ a chain alone, because it pins what the log said at a known time.
 ## What this still does not do
 
 The chain proves the log is internally consistent, not who wrote it. Signed
-checkpoints are on the roadmap; until then, put the directory on append-only or
-object-lock storage.
+checkpoints close most of that gap, and they are on by default: verification
+checks each signature and checks it against the chain, so a rewrite without the
+key leaves behind checkpoints that are validly signed and disagree with the
+records they attest to. What remains is an attacker holding the key, which is
+why `--signer exec:<command>` exists to keep it off this host, and why the
+directory still belongs on append-only or object-lock storage.
 
 Article 12 contemplates logging over the system's lifetime, which includes
 events the proxy never sees: model swaps, prompt template changes, retrieval

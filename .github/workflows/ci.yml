@@ -141,13 +141,14 @@ jobs:
           docker exec fs flugschreiber export \
             --dir /var/lib/flugschreiber --out /var/lib/flugschreiber/bundle.tar.gz
 
-          # The bundle must never carry the signing key or the client salt.
-          # The image is distroless and has no shell, so a throwaway container
-          # does the inspecting. Running tar inside fs would fail silently and
-          # the check would pass no matter what the bundle contained.
+          # The bundle must never carry the signing key, the client salt or the
+          # content keystore. The image is distroless and has no shell, so a
+          # throwaway container does the inspecting. Running tar inside fs would
+          # fail silently and the check would pass no matter what the bundle
+          # contained.
           contents=$(docker run --rm -v fs-evidence:/e busybox tar tzf /e/bundle.tar.gz)
           echo "$contents"
-          if echo "$contents" | grep -E 'signing-key|client-salt'; then
+          if echo "$contents" | grep -E 'signing-key|client-salt|content-keys'; then
             echo "the evidence bundle leaked a secret"
             exit 1
           fi

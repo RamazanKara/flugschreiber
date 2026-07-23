@@ -237,6 +237,15 @@ Flags:
 	} else {
 		fmt.Printf("  checkpoints none; the chain shows internal consistency only\n")
 	}
+	if n := len(m.RetiredKeys); n > 0 {
+		fmt.Printf("  keys        %d retired public key(s) carried, so checkpoints signed before a rotation still verify\n", n)
+	}
+	if m.Timestamps > 0 {
+		fmt.Printf("  anchors     %d RFC 3161 token(s)\n", m.Timestamps)
+	}
+	if m.SealedRecords > 0 {
+		fmt.Printf("  sealed      %d record(s) carry encrypted content; the keys are not in the bundle\n", m.SealedRecords)
+	}
 	if m.Pruned {
 		fmt.Printf("  pruned      yes; pruned.json records what was removed and why\n")
 	}

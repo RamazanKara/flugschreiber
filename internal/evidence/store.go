@@ -47,13 +47,32 @@ type Options struct {
 	SyncInterval    time.Duration
 	QueueDepth      int
 
-	// Keys signs checkpoints. When nil the store writes no checkpoints, which
-	// is the hash-chain-only behaviour of M1.
+	// Keys signs checkpoints. When nil, and no Signer is set either, the store
+	// writes no checkpoints, which is the hash-chain-only behaviour of M1.
 	Keys *KeyPair
+
+	// Signer signs checkpoints instead of Keys when it is set, which is how
+	// the private key stops having to live beside the evidence. Verification
+	// is unaffected: it needs the public keys on disk and nothing else.
+	Signer Signer
 
 	// CheckpointInterval is how often the head is attested while the log is
 	// being appended to. Defaults to DefaultCheckpointInterval.
 	CheckpointInterval time.Duration
+
+	// Timestamper anchors checkpoints with an RFC 3161 authority. When it is
+	// set, checkpoints are anchored on the interval below, which upgrades their
+	// time from this host's claim to a third party's. Anchoring never blocks a
+	// write and never fails one; internal/custody has the HTTP implementation.
+	Timestamper Timestamper
+
+	// TSAInterval bounds how often a checkpoint is anchored. Defaults to
+	// DefaultTSAInterval.
+	TSAInterval time.Duration
+
+	// TSATimeout bounds one round trip to the authority. Defaults to
+	// DefaultTSATimeout.
+	TSATimeout time.Duration
 
 	// Archiver copies sealed segments, the checkpoints and the public key to a
 	// second location. It is optional, it is never on the append path, and a
@@ -84,6 +103,10 @@ type Options struct {
 // callers needing to coordinate.
 type Store struct {
 	opts Options
+
+	// signer is Options.Signer, or an adapter over Options.Keys, resolved once
+	// at Open so that nothing on the write path has to decide which is in use.
+	signer Signer
 
 	queue chan *Event
 	done  chan struct{}
@@ -122,6 +145,21 @@ type Store struct {
 	archiveSkipped  atomic.Uint64
 	archiveFailed   atomic.Uint64
 	archiveErr      atomic.Pointer[error]
+
+	// Timestamping runs on its own goroutine for the same reason archival
+	// does: a timestamping authority is somebody else's service, and it must
+	// not be able to add latency to an append, let alone fail one.
+	tsaJobs chan timestampJob
+	tsaWG   sync.WaitGroup
+	tsaCtx  context.Context
+	tsaStop context.CancelFunc
+
+	// lastTimestampAt is owned by the writer goroutine.
+	lastTimestampAt time.Time
+
+	timestamped atomic.Uint64
+	tsaFailed   atomic.Uint64
+	tsaErr      atomic.Pointer[error]
 }
 
 // Open prepares dir for appending, recovering the chain head from the newest
@@ -148,6 +186,12 @@ func Open(opts Options) (*Store, error) {
 	if opts.ArchiveShutdownTimeout <= 0 {
 		opts.ArchiveShutdownTimeout = DefaultArchiveShutdownTimeout
 	}
+	if opts.TSAInterval <= 0 {
+		opts.TSAInterval = DefaultTSAInterval
+	}
+	if opts.TSATimeout <= 0 {
+		opts.TSATimeout = DefaultTSATimeout
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -157,9 +201,19 @@ func Open(opts Options) (*Store, error) {
 
 	s := &Store{
 		opts:     opts,
+		signer:   resolveSigner(opts),
 		queue:    make(chan *Event, opts.QueueDepth),
 		done:     make(chan struct{}),
 		prevHash: GenesisHash,
+	}
+	// An external signer's public key still has to reach the evidence
+	// directory, or the checkpoints it signs are unverifiable by whoever holds
+	// the log. Writing it when it is absent, and refusing when it contradicts
+	// what is already there, is exactly how the built-in key is handled.
+	if opts.Signer != nil {
+		if err := reconcilePublicKey(opts.Dir, opts.Signer.Public()); err != nil {
+			return nil, err
+		}
 	}
 
 	segs, err := Segments(opts.Dir)
@@ -197,6 +251,13 @@ func Open(opts Options) (*Store, error) {
 	}
 	s.buf = bufio.NewWriterSize(s.file, 64<<10)
 
+	// The lock is claimed before any background worker starts, so that a
+	// failure here cannot leave goroutines running behind a Store that Open
+	// never returned.
+	if err := writeWriterLock(opts.Dir); err != nil {
+		return nil, err
+	}
+
 	if opts.Archiver != nil {
 		s.uploads = make(chan archiveJob, opts.ArchiveQueueDepth)
 		s.archiveCtx, s.archiveStop = context.WithCancel(context.Background())
@@ -205,13 +266,34 @@ func Open(opts Options) (*Store, error) {
 		// The public key is what makes an archived checkpoint checkable, so it
 		// goes up before the first segment rather than only at shutdown, which
 		// a crash never reaches.
-		s.archivePublicKey()
+		s.archiveVerificationKeys()
 		s.archiveCatchUp(segs)
+	}
+
+	if opts.Timestamper != nil {
+		s.tsaJobs = make(chan timestampJob, tsaQueueDepth)
+		s.tsaCtx, s.tsaStop = context.WithCancel(context.Background())
+		s.tsaWG.Add(1)
+		go s.timestampLoop()
 	}
 
 	s.wg.Add(1)
 	go s.run()
 	return s, nil
+}
+
+// resolveSigner picks the signing path once. An explicit Signer wins over a
+// key file: an operator who has moved custody off the host has said which one
+// they mean, and silently preferring the local key would be the one mistake
+// that makes the move pointless.
+func resolveSigner(opts Options) Signer {
+	if opts.Signer != nil {
+		return opts.Signer
+	}
+	if opts.Keys != nil {
+		return NewKeyPairSigner(opts.Keys)
+	}
+	return nil
 }
 
 // Append enqueues an event. It blocks if the writer is behind, applying
@@ -251,21 +333,33 @@ func (s *Store) Err() error {
 
 // Close drains the queue, flushes and fsyncs. Records already accepted by
 // Append are written before Close returns.
+//
+// The timestamper is drained before the archive, and the anchors are offered to
+// the archive once more afterwards. The order matters on the last shutdown an
+// installation ever performs: anchors are appended by the timestamping
+// goroutine, so the one over a run's final checkpoint lands in timestamps.jsonl
+// after the archive has already snapshotted that file. Draining the other way
+// round converges on the next start, and a host that is being decommissioned
+// has no next start.
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		close(s.queue)
 		s.wg.Wait()
 		close(s.done)
+		s.stopTimestamps()
+		s.archiveTimestamps()
 		s.stopArchive()
+		removeWriterLock(s.opts.Dir)
 	})
 	return s.closeErr
 }
 
-// archiveCancelGrace is how long shutdown waits after cancelling in-flight
-// uploads. An Archiver that honours its context returns almost immediately;
-// one that does not is abandoned rather than allowed to block the process.
-const archiveCancelGrace = 2 * time.Second
+// drainCancelGrace is how long shutdown waits after cancelling work that is
+// still in flight. An implementation that honours its context returns almost
+// immediately; one that does not is abandoned rather than allowed to block the
+// process.
+const drainCancelGrace = 2 * time.Second
 
 // stopArchive drains the upload queue, but only for as long as it is worth
 // waiting. Nothing in the evidence directory depends on the archive, so an
@@ -278,38 +372,48 @@ func (s *Store) stopArchive() {
 	// The writer goroutine has finished, so nothing can queue another job.
 	close(s.uploads)
 
+	if drainWithin(&s.archiveWG, s.archiveStop, s.opts.ArchiveShutdownTimeout) {
+		return
+	}
+	s.recordArchiveErr(fmt.Errorf(
+		"evidence: archive to %s did not finish within %s of shutdown; the evidence directory %s holds the complete log",
+		s.opts.Archiver.Name(), s.opts.ArchiveShutdownTimeout, s.opts.Dir))
+}
+
+// drainWithin waits for a background worker to finish what it is doing,
+// cancels it when timeout expires, and gives the cancellation a moment to be
+// noticed. It reports whether the work drained in time.
+//
+// Cancelling aborts a transfer in flight for any implementation that honours
+// its context, and the caller then counts what could not be shipped. But these
+// are interfaces satisfied by code this package does not own, and an
+// implementation that ignores cancellation must not be able to hold the
+// process open: waiting here without a bound would hand a third party a veto
+// over shutdown, which is what the timeout exists to prevent.
+func drainWithin(wg *sync.WaitGroup, stop context.CancelFunc, timeout time.Duration) bool {
 	drained := make(chan struct{})
 	go func() {
-		s.archiveWG.Wait()
+		wg.Wait()
 		close(drained)
 	}()
 
-	timer := time.NewTimer(s.opts.ArchiveShutdownTimeout)
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case <-drained:
-		s.archiveStop()
-		return
+		stop()
+		return true
 	case <-timer.C:
 	}
 
-	// Cancelling aborts a transfer in flight for any Archiver that honours the
-	// context, and the loop then counts what it could not ship. But Archiver is
-	// an interface, and an implementation that ignores cancellation must not be
-	// able to hold the process open: waiting here without a bound would hand a
-	// third-party backend a veto over shutdown, which is exactly what this
-	// timeout exists to prevent.
-	s.archiveStop()
-	grace := time.NewTimer(archiveCancelGrace)
+	stop()
+	grace := time.NewTimer(drainCancelGrace)
 	defer grace.Stop()
 	select {
 	case <-drained:
 	case <-grace.C:
 	}
-
-	s.recordArchiveErr(fmt.Errorf(
-		"evidence: archive to %s did not finish within %s of shutdown; the evidence directory %s holds the complete log",
-		s.opts.Archiver.Name(), s.opts.ArchiveShutdownTimeout, s.opts.Dir))
+	return false
 }
 
 func (s *Store) run() {
@@ -346,7 +450,7 @@ func (s *Store) run() {
 // first, so a checkpoint never attests to bytes that a power cut could still
 // take away.
 func (s *Store) checkpoint() error {
-	if s.opts.Keys == nil || s.seq == 0 || s.seq == s.checkpointSeq {
+	if s.signer == nil || s.seq == 0 || s.seq == s.checkpointSeq {
 		return nil
 	}
 	if err := s.sync(); err != nil {
@@ -356,7 +460,7 @@ func (s *Store) checkpoint() error {
 }
 
 func (s *Store) appendCheckpoint(segment string) error {
-	if s.opts.Keys == nil || s.seq == 0 || s.seq == s.checkpointSeq {
+	if s.signer == nil || s.seq == 0 || s.seq == s.checkpointSeq {
 		return nil
 	}
 	c := Checkpoint{
@@ -371,7 +475,7 @@ func (s *Store) appendCheckpoint(segment string) error {
 		Records:   s.seq,
 		Timestamp: s.opts.Now().UTC().Format(time.RFC3339Nano),
 	}
-	if err := SignCheckpoint(s.opts.Keys.Private, s.opts.Keys.ID, &c); err != nil {
+	if err := SignCheckpointWith(s.signer, &c); err != nil {
 		return err
 	}
 	if err := AppendCheckpoint(s.opts.Dir, c); err != nil {
@@ -379,6 +483,7 @@ func (s *Store) appendCheckpoint(segment string) error {
 	}
 	s.checkpointSeq = s.seq
 	s.checkpoints.Add(1)
+	s.maybeTimestamp(c)
 	return nil
 }
 
@@ -432,8 +537,14 @@ func (s *Store) rotate() error {
 	// Checkpoint the segment that was just sealed. A completed segment never
 	// changes again, so this is the moment its contents become worth attesting
 	// to.
+	//
+	// A checkpoint that cannot be signed is recorded as a store error and the
+	// rotation continues, exactly as at shutdown. Returning here instead would
+	// abandon the rotation with the old segment closed and no new one open, so
+	// an external signer that stops answering would cost every record from that
+	// moment on, which is the one thing a signing failure must never do.
 	if err := s.appendCheckpoint(SegmentName(s.segIndex)); err != nil {
-		return err
+		s.writeErr.CompareAndSwap(nil, &err)
 	}
 	// The segment is sealed and will never change again, which is the only
 	// state an object store can hold. Queueing it here never blocks: the upload
@@ -497,7 +608,7 @@ func (s *Store) shutdown() error {
 		s.archiveOpenSegment()
 	}
 	s.archiveCheckpoints()
-	s.archivePublicKey()
+	s.archiveVerificationKeys()
 	return s.Err()
 }
 

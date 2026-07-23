@@ -140,6 +140,28 @@ Call with (dict "root" $ "listen" "<addr>").
 {{- end }}
 - name: FLUGSCHREIBER_LOG_LEVEL
   value: {{ $v.config.logLevel | quote }}
+{{- with $v.config.signer }}
+- name: FLUGSCHREIBER_SIGNER
+  value: {{ . | quote }}
+- name: FLUGSCHREIBER_SIGNER_PUBLIC_KEY
+  value: {{ $v.config.signerPublicKey | quote }}
+{{- end }}
+{{- with $v.config.tsaUrl }}
+- name: FLUGSCHREIBER_TSA_URL
+  value: {{ . | quote }}
+{{- end }}
+{{- with $v.config.tsaInterval }}
+- name: FLUGSCHREIBER_TSA_INTERVAL
+  value: {{ . | quote }}
+{{- end }}
+{{- if gt (int $v.config.retentionMaxBytes) 0 }}
+- name: FLUGSCHREIBER_RETENTION_MAX_BYTES
+  value: {{ $v.config.retentionMaxBytes | quote }}
+{{- end }}
+{{- if $v.config.contentEncryption }}
+- name: FLUGSCHREIBER_CONTENT_ENCRYPTION
+  value: "true"
+{{- end }}
 {{- /*
 Both booleans are always emitted rather than only when true. They decide how
 much the log is worth and whether an endpoint is open, so `kubectl describe

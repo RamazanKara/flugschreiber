@@ -2,13 +2,22 @@ package evidence
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
+	"path"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/RamazanKara/flugschreiber/internal/archive"
 )
 
 // fakeArchiver records what a store hands it. It stands in for internal/archive
@@ -323,6 +332,363 @@ func TestStoreWithoutAnArchiverReportsNothing(t *testing.T) {
 	}
 }
 
+// rotatedDir is an evidence directory that has been written under one key,
+// rotated to another, and anchored. It returns the id of the retired key.
+func rotatedDir(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	kp, err := LoadOrCreateKeyPair(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(Options{Dir: dir, Keys: kp, Now: fixedClock()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, s, 6)
+	// Closing writes the checkpoint that the rotation is about to strand: it is
+	// signed by the key that is on its way out.
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cps, err := ReadCheckpoints(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cps) == 0 {
+		t.Fatal("the first run wrote no checkpoint, so there is nothing for a retired key to have signed")
+	}
+	appendAnchor(t, dir, cps[0])
+
+	rot, err := RotateKey(dir)
+	if err != nil {
+		t.Fatalf("RotateKey: %v", err)
+	}
+	return dir, rot.OldKeyID
+}
+
+// assembleFromArchive rebuilds an evidence directory from the archive alone,
+// which is what somebody holding the bucket and nothing else has to work with.
+// The snapshots are collapsed back to the file name they were taken from, and
+// the last key in order wins: every one of them carries a zero-padded number
+// that grows with the file, so that is the fullest snapshot the archive holds.
+func assembleFromArchive(t *testing.T, root string) string {
+	t.Helper()
+	out := t.TempDir()
+
+	copyTo := func(src, name string) {
+		dst := filepath.Join(out, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, readFileBytes(t, src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	err := filepath.WalkDir(root, func(p string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		key := filepath.ToSlash(rel)
+		base := path.Base(key)
+		switch dir := path.Dir(key); dir {
+		case "open":
+			// open/seg-00000001.seq-000000000009.jsonl came from seg-00000001.jsonl.
+			copyTo(p, strings.SplitN(base, ".seq-", 2)[0]+".jsonl")
+		case "checkpoints":
+			copyTo(p, CheckpointsFile)
+		case "timestamps":
+			copyTo(p, TimestampsFile)
+		default:
+			copyTo(p, key)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// The archive is read by whoever holds the bucket, and after a rotation it
+// holds checkpoints signed by a key that public-key.pem no longer names. If the
+// retired public key and the anchors do not travel with them, that copy of the
+// evidence cannot be verified by anyone, which makes the whole offsite copy
+// theatre.
+func TestArchiveCarriesRetiredKeysAndAnchorsAfterARotation(t *testing.T) {
+	dir, retiredID := rotatedDir(t)
+
+	root := t.TempDir()
+	backend, err := archive.NewDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := archivingStore(t, dir, backend, "", 0)
+	appendN(t, s, 3)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := s.ArchiveErr(); err != nil {
+		t.Fatalf("ArchiveErr = %v, want nil", err)
+	}
+
+	retiredKey := RetiredKeysDir + "/retired-" + retiredID + ".pem"
+	archived, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(retiredKey)))
+	if err != nil {
+		t.Fatalf("the archive does not hold %s, so the checkpoints it signed cannot be checked from the archive: %v",
+			retiredKey, err)
+	}
+	if string(archived) != string(readFileBytes(t, filepath.Join(dir, filepath.FromSlash(retiredKey)))) {
+		t.Error("the retired key in the archive differs from the one on disk")
+	}
+
+	// The decisive property: the archive on its own verifies, including the half
+	// of the checkpoints that predate the rotation.
+	assembled := assembleFromArchive(t, root)
+	res, err := Verify(assembled)
+	if err != nil {
+		t.Fatalf("Verify on the archive: %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("the archive alone does not verify: %v", res.Problems)
+	}
+	if res.Records != 10 {
+		t.Errorf("the archive holds %d records, want 10", res.Records)
+	}
+	if len(res.RetiredKeys) != 1 || res.RetiredKeys[0] != retiredID {
+		t.Errorf("retired keys in the archive = %v, want [%s]", res.RetiredKeys, retiredID)
+	}
+	if res.CheckpointsVerified != res.Checkpoints {
+		t.Errorf("%d of %d archived checkpoints verified against the keys in the archive",
+			res.CheckpointsVerified, res.Checkpoints)
+	}
+	if res.Timestamps != 1 {
+		t.Errorf("the archive holds %d anchors, want 1; the RFC 3161 tokens never left the host", res.Timestamps)
+	}
+}
+
+// An archive that cannot list keys/ says so. Silence there is the failure this
+// test exists to keep out: an operator would read an archive with no retired
+// keys as an archive that never needed any.
+func TestUnreadableRetiredKeysAreReportedNotSkipped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Go synthesises Unix permission bits there, so chmod would not make the
+		// directory unreadable and the test would prove nothing.
+		t.Skip("directory permissions are not enforced through os.Chmod on Windows")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("running as root, which can read a directory with no permissions")
+	}
+	dir, _ := rotatedDir(t)
+	keys := filepath.Join(dir, RetiredKeysDir)
+	if err := os.Chmod(keys, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(keys, 0o750) })
+
+	s := archivingStore(t, dir, newFakeArchiver(), "", 0)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.ArchiveErr()
+	if err == nil {
+		t.Fatal("keys/ could not be read and the archiver said nothing")
+	}
+	if !strings.Contains(err.Error(), RetiredKeysDir) {
+		t.Errorf("ArchiveErr does not name what could not be read: %v", err)
+	}
+	if s.ArchiveStats().Failed == 0 {
+		t.Error("nothing was counted as failed, so nothing would ever alert")
+	}
+}
+
+// Anchors are appended by the timestamping goroutine, and Close drains the
+// archive before it drains that goroutine, so the anchor over the last
+// checkpoint of a run is written after the snapshot of timestamps.jsonl has
+// gone up. Whatever names the object it went up under has to change when the
+// file gains that anchor, or the next start offers a key the archive already
+// holds, Exists answers yes, and the anchor never leaves the host: an
+// installation shut down for the last time would leave its final anchors out
+// of the offsite copy for good.
+func TestAnAnchorWrittenAfterTheSnapshotStillReachesTheArchive(t *testing.T) {
+	dir := t.TempDir()
+	root := t.TempDir()
+	backend, err := archive.NewDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := archivingStore(t, dir, backend, "", 400)
+	appendN(t, s, 4)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cps, err := ReadCheckpoints(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cps) < 2 {
+		t.Fatalf("the fixture wrote %d checkpoints, it needs at least two", len(cps))
+	}
+
+	// An anchor over an earlier checkpoint, and the restart that ships it. From
+	// here the archive holds a timestamps object taken at this head.
+	appendAnchor(t, dir, cps[0])
+	s = archivingStore(t, dir, backend, "", 400)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The anchor over the last checkpoint, landing after that object went up.
+	appendAnchor(t, dir, cps[len(cps)-1])
+
+	// A restart that writes no record, which is what an idle installation does
+	// and what a decommissioned one does exactly once.
+	s = archivingStore(t, dir, backend, "", 400)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ArchiveErr(); err != nil {
+		t.Fatalf("ArchiveErr = %v, want nil", err)
+	}
+
+	onDisk, err := ReadTimestamps(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Verify(assembleFromArchive(t, root))
+	if err != nil {
+		t.Fatalf("Verify on the archive: %v", err)
+	}
+	if res.Timestamps != len(onDisk) {
+		t.Errorf("the archive holds %d of the %d anchors on disk; the rest never left the host",
+			res.Timestamps, len(onDisk))
+	}
+}
+
+// A key file that is there and cannot be examined is the case that must not be
+// quiet: an archive missing a retired key reads exactly like an archive that
+// never needed one, and the difference only shows up when somebody tries to
+// verify the offsite copy and cannot.
+func TestAKeyFileThatCannotBeExaminedIsReportedNotSkipped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks are not available to an unprivileged process on Windows")
+	}
+	dir, retiredID := rotatedDir(t)
+
+	// A symlink loop: the name is in keys/ and stat cannot resolve it, which is
+	// what a directory copied badly or a filesystem in trouble produces.
+	retired := filepath.Join(dir, filepath.FromSlash(RetiredKeysDir), "retired-"+retiredID+".pem")
+	loop := retired + ".loop"
+	if err := os.Remove(retired); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(loop, retired); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(retired, loop); err != nil {
+		t.Fatal(err)
+	}
+
+	s := archivingStore(t, dir, newFakeArchiver(), "", 0)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.ArchiveErr()
+	if err == nil {
+		t.Fatal("a retired key could not be read and the archiver said nothing")
+	}
+	if !strings.Contains(err.Error(), retiredID) {
+		t.Errorf("ArchiveErr does not name the key that did not reach the archive: %v", err)
+	}
+	if s.ArchiveStats().Failed == 0 {
+		t.Error("nothing was counted as failed, so nothing would ever alert")
+	}
+}
+
+// externalSigner stands in for custody that has moved off the host: it signs
+// exactly as the built-in key does, but the store is never given a KeyPair.
+type externalSigner struct {
+	pub  ed25519.PublicKey
+	priv ed25519.PrivateKey
+}
+
+func (s *externalSigner) Sign(preimage []byte) ([]byte, error) {
+	return ed25519.Sign(s.priv, preimage), nil
+}
+func (s *externalSigner) Public() ed25519.PublicKey { return s.pub }
+func (s *externalSigner) KeyID() string             { return KeyID(s.pub) }
+
+// Moving the private key off the host must not cost the archive its
+// checkpoints. Segments in a bucket with nothing attesting to them are
+// segments whoever holds that bucket cannot attribute to anybody.
+func TestCheckpointsReachTheArchiveWhenSigningIsExternal(t *testing.T) {
+	dir := t.TempDir()
+	root := t.TempDir()
+	backend, err := archive.NewDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(Options{
+		Dir:                    dir,
+		SegmentMaxBytes:        400,
+		Signer:                 &externalSigner{pub: pub, priv: priv},
+		Archiver:               backend,
+		ArchiveShutdownTimeout: 5 * time.Second,
+		Now:                    fixedClock(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, s, 4)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Verify(assembleFromArchive(t, root))
+	if err != nil {
+		t.Fatalf("Verify on the archive: %v", err)
+	}
+	if res.Checkpoints == 0 {
+		t.Fatal("the archive holds no checkpoints, so nothing in it can be attributed to the signer")
+	}
+	if !res.Attested || res.CheckpointsVerified != res.Checkpoints {
+		t.Errorf("%d of %d archived checkpoints verified against the archived key",
+			res.CheckpointsVerified, res.Checkpoints)
+	}
+}
+
+// appendAnchor files an anchor against a checkpoint. The token is not a real
+// RFC 3161 one, so verification reports it as a note rather than a problem;
+// what the archive tests are about is whether the line reaches the bucket.
+func appendAnchor(t *testing.T, dir string, c Checkpoint) {
+	t.Helper()
+	err := AppendTimestamp(dir, Timestamp{
+		Seq:         c.Seq,
+		RecordHash:  c.RecordHash,
+		TokenBase64: base64.StdEncoding.EncodeToString([]byte("not a real timestamp token")),
+		TSAURL:      "https://tsa.example/tsr",
+		RequestedAt: "2026-03-01T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func readFileBytes(t *testing.T, path string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -330,4 +696,77 @@ func readFileBytes(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+// The anchor over a run's last checkpoint is written by the timestamping
+// goroutine while the store is shutting down, which is after the point the
+// shutdown flush snapshots timestamps.jsonl for the archive. A restart ships it;
+// a host being decommissioned has no restart. So shutdown drains the
+// timestamper before the archive and offers the anchors once more in between.
+//
+// The authority here answers slowly on purpose. That is the mechanism, not
+// incidental: the defect only exists for an anchor that lands after the
+// snapshot, and an instant answer lands before it and would make this test pass
+// against the bug. The delay is two orders of magnitude longer than draining a
+// handful of small files to a local directory, and both shutdown timeouts are
+// set far above it.
+func TestTheFinalAnchorOfARunReachesTheArchiveWithoutARestart(t *testing.T) {
+	dir := t.TempDir()
+	root := t.TempDir()
+	backend, err := archive.NewDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kp, err := LoadOrCreateKeyPair(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const answerDelay = 300 * time.Millisecond
+	stub := newTSAStub(t)
+	stub.answer = func(t *testing.T, imprint []byte) ([]byte, error) {
+		time.Sleep(answerDelay)
+		return timestampResponseOver(t, imprint), nil
+	}
+
+	s, err := Open(Options{
+		Dir:                    dir,
+		SegmentMaxBytes:        400,
+		Keys:                   kp,
+		Archiver:               backend,
+		ArchiveShutdownTimeout: 30 * time.Second,
+		Timestamper:            stub,
+		TSAInterval:            time.Nanosecond,
+		TSATimeout:             30 * time.Second,
+		Now:                    fixedClock(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendN(t, s, 12)
+
+	// One shutdown, no second start. That is the whole point of the test.
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := s.ArchiveErr(); err != nil {
+		t.Fatalf("ArchiveErr = %v, want nil", err)
+	}
+
+	onDisk, err := ReadTimestamps(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onDisk) == 0 {
+		t.Fatal("nothing was anchored, so the archive has nothing to be missing")
+	}
+
+	res, err := Verify(assembleFromArchive(t, root))
+	if err != nil {
+		t.Fatalf("Verify on the archive: %v", err)
+	}
+	if res.Timestamps != len(onDisk) {
+		t.Errorf("the archive holds %d of the %d anchors on disk; the rest would have stayed on a host that never starts again",
+			res.Timestamps, len(onDisk))
+	}
 }

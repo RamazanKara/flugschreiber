@@ -70,6 +70,27 @@ type Archiver interface {
 	Name() string
 }
 
+// ErrNotFound reports that a key names no object in the archive. Get wraps it,
+// so a deep archive verification can tell a genuinely missing object from a
+// backend that is only unreachable: the first is a gap in the archive, the
+// second is a gap in the check, and the two call for opposite responses.
+var ErrNotFound = errors.New("archive: object not found")
+
+// Getter reads an archived object back.
+//
+// It is the read half archive verification needs, kept apart from Archiver so
+// that the write path a store depends on is not widened by a verification-only
+// method. Exists answers whether a key is present; Get returns its bytes, so a
+// deep check can compare them against the local copy. Both backends satisfy it,
+// and the evidence layer takes it structurally the same way it takes Archiver,
+// so the dependency still points away from the store.
+type Getter interface {
+	// Get opens the object stored under key for reading. The caller closes the
+	// returned reader. A key the archive does not hold returns an error
+	// satisfying errors.Is(err, ErrNotFound).
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
+}
+
 // CleanKey validates an object key and returns it in canonical form.
 //
 // Keys come from segment file names, so this is not defending against a hostile
@@ -328,6 +349,31 @@ func (d *Dir) Exists(ctx context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("archive: stat %s: %w", clean, err)
 	}
 	return info.Mode().IsRegular(), nil
+}
+
+// Get opens the object stored under key for reading. It is the os.Open behind a
+// deep archive verification, which reads the archived bytes back to compare
+// them against the local segment. The caller closes the returned reader.
+//
+// A key that names no object returns an error satisfying
+// errors.Is(err, ErrNotFound), the same sentinel the S3 backend returns for a
+// 404, so a caller checking one archive kind checks them all the same way.
+func (d *Dir) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	clean, err := CleanKey(key)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(filepath.Join(d.root, filepath.FromSlash(clean)))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("archive: get %s: %w", clean, ErrNotFound)
+		}
+		return nil, fmt.Errorf("archive: open %s: %w", clean, err)
+	}
+	return f, nil
 }
 
 // syncDir durably records the rename. It is best effort because directory

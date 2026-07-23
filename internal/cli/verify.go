@@ -94,6 +94,14 @@ func printVerify(res *evidence.VerifyResult) {
 	} else {
 		fmt.Printf("  attestation none; the chain shows internal consistency only\n")
 	}
+	// Anchoring is reported only when there is anchoring, because a line saying
+	// "none" on every log that never enabled it would read as a deficiency
+	// rather than as a setting nobody chose.
+	if res.Timestamps > 0 {
+		fmt.Printf("  anchors     %d RFC 3161 token(s), %d matched to the checkpoint they cover\n",
+			res.Timestamps, res.TimestampedCheckpoints)
+		fmt.Printf("              the authority's own signature is not checked here; VERIFY.md has the openssl command\n")
+	}
 	fmt.Printf("  checked in  %s\n", res.Duration)
 
 	if len(res.Problems) == 0 {

@@ -3,6 +3,7 @@
 Drafts, not scheduled copy. Read them out loud before posting, and cut anything
 that sounds like it came from a template.
 
+<!-- unslop-ignore: the rules here separate whole draft posts, not sections of one document. -->
 Do not post any of these until the repository is public, the GIF is recorded,
 and `docker run ghcr.io/ramazankara/flugschreiber:latest` actually works for a
 stranger. The fastest way to waste a Show HN is to publish it against a README
@@ -15,7 +16,7 @@ whose first command fails.
 ### Title (80 char limit, this is 74)
 
 ```
-Show HN: Flugschreiber – tamper-evident audit logs for self-hosted LLMs
+Show HN: Flugschreiber, tamper-evident audit logs for self-hosted LLMs
 ```
 
 ### Body
@@ -79,16 +80,19 @@ ISO 42001 audit, tell me what the auditor asked for that this does not record.
 
 ### Notes for the day
 
-Post Tuesday to Thursday, roughly 09:00–11:00 Eastern. Be around for the first
+Post Tuesday to Thursday, roughly 09:00 to 11:00 Eastern. Be around for the first
 four hours; a Show HN dies without the author answering.
 
 Have honest answers ready for the three questions that will definitely come:
 
 - *"Why not Langfuse?"* Because they are built for debugging and this is built
   for evidence. Say it without knocking them, and say you can run both.
-- *"The chain doesn't prove anything, you can just rewrite it."* Agree
-  immediately. It is in the README, SECURITY.md and the generated docs. Say
-  where signed checkpoints are on the roadmap.
+- *"The chain doesn't prove anything, you can just rewrite it."* Agree that a
+  chain alone does not, then say what closes it: signed checkpoints are on by
+  default, verification checks the signature and the chain together, and the
+  remaining gap is custody of the key, which is why an external signer and
+  timestamp anchoring exist. It is in the README, SECURITY.md and the generated
+  docs, stated as a limitation rather than buried.
 - *"This is compliance theatre."* Also fair as a prior. The answer is that it
   produces evidence and documentation inputs, that it never claims otherwise
   anywhere in the product, and that the generated documents mark their gaps

@@ -58,17 +58,31 @@ functions:
 
 - `internal/evidence` proves the chain detects tampering. If you touch hashing or
   the store, the byte-flip, forgery, deletion and truncation tests are the ones
-  that matter.
+  that matter. It imports nothing internal and must not reach `net/http` or
+  `os/exec`, even transitively: anything that talks to another process or host
+  goes in `internal/custody`, behind an interface evidence declares.
 - `internal/proxy` proves capture is correct and that content modes keep their
   promises. `TestHashModeStoresNoText` and `TestStreamingIsNotBuffered` encode
   claims the README makes.
 - `internal/report` uses golden files. If your change alters generated output,
   run `make golden` and **read the diff** before committing it. A golden test you
   update without reading is a test that has stopped working.
-- `test/` builds the binary and runs the quickstart over real HTTP.
+- `internal/custody` proves that signing through an external helper and
+  anchoring to a timestamping authority produce evidence indistinguishable from
+  the built-in path. The helper is this test binary run again in helper mode, so
+  a real process really is started and really answers over a pipe.
+- `test/` builds the binary and runs the quickstart over real HTTP, and enforces
+  the dependency graph. `TestFoundationsHoldNoOutwardFacingMachinery` checks the
+  transitive closure of `internal/evidence`, not just its internal edges,
+  because the ways to grow that closure are all convenient.
 
 Everything runs against the built-in mock upstream. No test needs a GPU, a model
 server, or a network.
+
+Write tests that fail when the feature is removed. Before you push, break the
+implementation on purpose and watch the test go red. A test that passes against
+a stubbed-out function is worse than no test, because it reports coverage of
+something it never checked, and this project has shipped two of those.
 
 ## Style
 

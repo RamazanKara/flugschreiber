@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,6 +26,11 @@ import (
 var secretFiles = map[string]bool{
 	"signing-key.pem": true,
 	"client-salt":     true,
+
+	// The content keystore opens every sealed prompt in the log. Handing over
+	// the evidence and handing over the content are separate decisions, and an
+	// export is only ever the first one.
+	evidence.ContentKeystoreFile: true,
 }
 
 // BundleManifest describes an evidence export so a recipient can tell whether
@@ -47,6 +53,35 @@ type BundleManifest struct {
 	Problems      []evidence.Problem `json:"problems,omitempty"`
 	Checkpoints   int                `json:"checkpoints"`
 	Pruned        bool               `json:"pruned"`
+
+	// Timestamps counts the RFC 3161 anchors carried, RetiredKeys names the
+	// keys rotation has replaced whose public halves travel with them. Both are
+	// stated in the manifest so that a recipient can tell a bundle that carries
+	// no anchors and no retired keys from one that lost them in transit.
+	Timestamps  int      `json:"timestamps,omitempty"`
+	RetiredKeys []string `json:"retired_keys,omitempty"`
+
+	// SealedRecords counts records whose content is encrypted. The keys are not
+	// in the bundle and never will be, so a recipient who is not told would
+	// read the unreadable content as content that was never captured.
+	SealedRecords int `json:"sealed_records,omitempty"`
+}
+
+// countSealed reports how many records carry encrypted content.
+//
+// A read error yields zero rather than failing the export: the count exists so
+// that VERIFY.md can explain unreadable content, and a bundle that ships with
+// one fewer sentence is better than an export that refuses to run. Verification
+// of the chain itself has already happened and is what has to be exact.
+func countSealed(dir string) int {
+	var n int
+	_ = evidence.Walk(dir, func(e evidence.Entry) error {
+		if e.Event.Content != nil && e.Event.Content.Encryption != nil {
+			n++
+		}
+		return nil
+	})
+	return n
 }
 
 // BundleFile is one file in the bundle with the digest of its contents.
@@ -74,7 +109,8 @@ type ExportResult struct {
 //
 // The bundle holds everything a third party needs to check the evidence and
 // nothing that would let them impersonate the system that produced it: the
-// segments, the checkpoints, the public key, a manifest, and instructions.
+// segments, the checkpoints and the anchors over them, every public key that
+// may have signed one, a manifest, and instructions.
 func Export(opts ExportOptions) (*ExportResult, error) {
 	if opts.Dir == "" {
 		return nil, fmt.Errorf("export: source directory is required")
@@ -113,58 +149,79 @@ func Export(opts ExportOptions) (*ExportResult, error) {
 		HeadHash:      verified.HeadHash,
 		ChainVerified: verified.OK(),
 		Problems:      verified.Problems,
+		RetiredKeys:   verified.RetiredKeys,
 	}
 
-	if err := os.MkdirAll(filepath.Dir(opts.Out), 0o750); err != nil {
+	outDir := filepath.Dir(opts.Out)
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
 		return nil, err
 	}
-	out, err := os.OpenFile(opts.Out, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
+	// The bundle is built beside its destination and moved into place only once
+	// it is whole. Writing straight to opts.Out would truncate whatever is
+	// already there before the first byte of the replacement is read, so an
+	// export that fails part way, on an unreadable segment or a full disk,
+	// would destroy the bundle the operator already had and leave a fragment
+	// under the name they are about to hand over. A truncated .tar.gz reads as
+	// a whole one until somebody opens it, which may be somewhere it matters.
+	out, err := os.CreateTemp(outDir, ".flugschreiber-bundle-*")
 	if err != nil {
 		return nil, err
 	}
-	defer out.Close()
+	tmpName := out.Name()
+	defer func() {
+		_ = out.Close()
+		// A no-op once the rename below has moved the file into place.
+		_ = os.Remove(tmpName)
+	}()
 
 	gz := gzip.NewWriter(out)
 	tw := tar.NewWriter(gz)
 
 	const root = "flugschreiber-evidence"
 
+	// A bundle name is a path inside a tar archive and stays slash separated on
+	// every platform, so it is built with path.Join while the file it is read
+	// from is built with filepath.Join.
 	for _, name := range files {
-		path := filepath.Join(opts.Dir, name)
-		info, err := os.Stat(path)
+		src := filepath.Join(opts.Dir, filepath.FromSlash(name))
+		info, err := os.Stat(src)
 		if err != nil {
 			return nil, err
 		}
-		digest, err := fileDigest(path)
+		digest, err := fileDigest(src)
 		if err != nil {
 			return nil, err
 		}
-		if err := writeFileEntry(tw, filepath.Join(root, name), path, info); err != nil {
+		if err := writeFileEntry(tw, path.Join(root, name), src, info); err != nil {
 			return nil, err
 		}
 		manifest.Files = append(manifest.Files, BundleFile{
 			Name: name, Bytes: info.Size(), SHA256: digest,
 		})
 		manifest.TotalBytes += info.Size()
-		if name == "checkpoints.jsonl" {
-			manifest.Checkpoints = countLines(path)
+		if name == evidence.CheckpointsFile {
+			manifest.Checkpoints = countLines(src)
 		}
-		if name == "pruned.json" {
+		if name == evidence.TimestampsFile {
+			manifest.Timestamps = countLines(src)
+		}
+		if name == evidence.PruneAnchorFile {
 			manifest.Pruned = true
 		}
 	}
+	manifest.SealedRecords = countSealed(opts.Dir)
 
 	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	manifestJSON = append(manifestJSON, '\n')
-	if err := writeBytesEntry(tw, filepath.Join(root, "MANIFEST.json"), manifestJSON, now()); err != nil {
+	if err := writeBytesEntry(tw, path.Join(root, "MANIFEST.json"), manifestJSON, now()); err != nil {
 		return nil, err
 	}
 
 	instructions := []byte(verifyInstructions(manifest, opts.Note))
-	if err := writeBytesEntry(tw, filepath.Join(root, "VERIFY.md"), instructions, now()); err != nil {
+	if err := writeBytesEntry(tw, path.Join(root, "VERIFY.md"), instructions, now()); err != nil {
 		return nil, err
 	}
 
@@ -177,12 +234,34 @@ func Export(opts ExportOptions) (*ExportResult, error) {
 	if err := out.Sync(); err != nil {
 		return nil, err
 	}
+	if err := out.Close(); err != nil {
+		return nil, err
+	}
+	// CreateTemp opens at 0600. The bundle carries no secret, and an operator
+	// who has to hand it to an auditor should not have to widen it by hand.
+	if err := os.Chmod(tmpName, 0o640); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmpName, opts.Out); err != nil {
+		return nil, err
+	}
 
 	return &ExportResult{Path: opts.Out, Manifest: manifest}, nil
 }
 
 // collect lists the files that belong in a bundle, in a stable order, and
 // refuses outright if a secret would be included.
+//
+// The list has to cover everything a recipient needs to check the chain end to
+// end with no access to this host, which is more than the current key: after a
+// rotation the log holds checkpoints signed under keys that are no longer in
+// force, and a bundle carrying those checkpoints without the keys they were
+// signed with cannot be verified by the third party it was made for. The
+// retired public keys and the RFC 3161 anchors therefore travel with the
+// segments.
+//
+// Names are returned relative to dir and slash separated, because they are also
+// paths inside the tar archive.
 func collect(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -201,24 +280,68 @@ func collect(dir string) ([]string, error) {
 		switch {
 		case strings.HasPrefix(name, "seg-") && strings.HasSuffix(name, ".jsonl"):
 			segments = append(segments, name)
-		case name == "checkpoints.jsonl", name == "public-key.pem",
-			name == "pruned.json", name == "LEGAL_HOLD":
+		case name == evidence.CheckpointsFile, name == evidence.TimestampsFile,
+			name == evidence.PublicKeyFile, name == evidence.PruneAnchorFile,
+			name == evidence.LegalHoldFile:
 			extras = append(extras, name)
 		}
 	}
 
+	// An unreadable keys/ is an error rather than an omission: a bundle that is
+	// silently missing a key is one that fails verification in somebody else's
+	// hands, weeks later, with no way to tell why.
+	retired, err := evidence.RetiredKeyFiles(dir)
+	if err != nil {
+		return nil, fmt.Errorf("export: %w", err)
+	}
+
 	sortStrings(segments)
 	sortStrings(extras)
-	out := make([]string, 0, len(segments)+len(extras))
+	sortStrings(retired)
+	out := make([]string, 0, len(segments)+len(extras)+len(retired))
 	out = append(out, segments...)
 	out = append(out, extras...)
+	out = append(out, retired...)
 
 	for _, name := range out {
-		if secretFiles[name] {
+		if secretFiles[path.Base(name)] {
 			return nil, fmt.Errorf("export: refusing to bundle %s, which must never leave the host", name)
+		}
+		if err := refusePrivateKeyMaterial(dir, name); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// refusePrivateKeyMaterial refuses a PEM file that announces a private key.
+//
+// The names under keys/ are written by rotation and hold public keys only, so
+// this fires when somebody has put a private key there by hand, or copied a
+// directory in a way that moved one. It is checked by content rather than by
+// name because the cost of being wrong once is a signing key in a third party's
+// hands, and there is no taking that back.
+//
+// It matches the PEM header as text rather than decoding the block. A file
+// whose body is damaged does not decode, and "this build could not parse it" is
+// not a reason to ship a key.
+func refusePrivateKeyMaterial(dir, name string) error {
+	if path.Ext(name) != ".pem" {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "-----BEGIN ") && strings.Contains(line, "PRIVATE") {
+			return fmt.Errorf(
+				"export: refusing to bundle %s, which holds %q; private key material must never leave the host",
+				name, line)
+		}
+	}
+	return nil
 }
 
 func sortStrings(s []string) {
@@ -313,6 +436,12 @@ func verifyInstructions(m BundleManifest, note string) string {
 		b.WriteString("| `checkpoints.jsonl` | Ed25519-signed attestations of the chain head over time |\n")
 		b.WriteString("| `public-key.pem` | The public key those signatures verify against |\n")
 	}
+	if n := len(m.RetiredKeys); n > 0 {
+		fmt.Fprintf(&b, "| `keys/retired-*.pem` | %d public key(s) a rotation replaced. Checkpoints signed before that rotation verify against these and against nothing else |\n", n)
+	}
+	if m.Timestamps > 0 {
+		b.WriteString("| `timestamps.jsonl` | RFC 3161 tokens from a timestamping authority, one per anchored checkpoint |\n")
+	}
 	if m.Pruned {
 		b.WriteString("| `pruned.json` | Records which segments were deleted under a retention policy, and where the surviving chain begins |\n")
 	}
@@ -332,6 +461,23 @@ func verifyInstructions(m BundleManifest, note string) string {
 		b.WriteString("The public key is a standard PKIX Ed25519 key, readable with:\n\n")
 		b.WriteString("```\nopenssl pkey -pubin -in flugschreiber-evidence/public-key.pem -text -noout\n```\n\n")
 	}
+	if len(m.RetiredKeys) > 0 {
+		b.WriteString("The keys under `keys/` were retired by a rotation and are in the same\n")
+		b.WriteString("format. Every checkpoint names the key that signed it in its `key_id`\n")
+		b.WriteString("field, and a retired key is filed as `keys/retired-<key_id>.pem`, so a\n")
+		b.WriteString("checkpoint written before a rotation is checked against the file carrying\n")
+		b.WriteString("its id. This bundle carries the retired key(s):\n\n")
+		fmt.Fprintf(&b, "```\n%s\n```\n\n", strings.Join(m.RetiredKeys, "\n"))
+	}
+	if m.Timestamps > 0 {
+		b.WriteString("Each line of `timestamps.jsonl` carries an RFC 3161 token in\n")
+		b.WriteString("`token_base64`, covering the `record_hash` of the checkpoint at that\n")
+		b.WriteString("sequence number. `verify` checks that the token covers that hash. It does\n")
+		b.WriteString("not check who issued the token, because that needs a trust store and a\n")
+		b.WriteString("decision about which authorities you accept, both of which are yours to\n")
+		b.WriteString("make. Once the token is base64-decoded to a file, openssl settles it:\n\n")
+		b.WriteString("```\nopenssl ts -verify -in token.tst -token_in -CAfile your-tsa-ca.pem -digest <record_hash>\n```\n\n")
+	}
 
 	b.WriteString("## State at export\n\n")
 	fmt.Fprintf(&b, "- Exported: %s\n", m.ExportedAt)
@@ -340,6 +486,15 @@ func verifyInstructions(m BundleManifest, note string) string {
 		fmt.Fprintf(&b, "- Window: %s to %s\n", m.FirstRecord, m.LastRecord)
 	}
 	fmt.Fprintf(&b, "- Chain head: `%s`\n", m.HeadHash)
+	if len(m.RetiredKeys) > 0 {
+		fmt.Fprintf(&b, "- Retired signing keys carried: %d\n", len(m.RetiredKeys))
+	}
+	if m.Timestamps > 0 {
+		fmt.Fprintf(&b, "- Timestamp anchors: %d\n", m.Timestamps)
+	}
+	if m.SealedRecords > 0 {
+		fmt.Fprintf(&b, "- Records with encrypted content: %d\n", m.SealedRecords)
+	}
 	if m.ChainVerified {
 		b.WriteString("- Verification at export: intact\n")
 	} else {
@@ -361,10 +516,25 @@ func verifyInstructions(m BundleManifest, note string) string {
 		b.WriteString("value at a given time, attested by a key held by the operator. An attacker\n")
 		b.WriteString("who rewrote the log but did not hold that key cannot produce checkpoints\n")
 		b.WriteString("that match it.\n\n")
+		if m.Timestamps > 0 {
+			b.WriteString("The timestamp anchors move the time on the checkpoints they cover from\n")
+			b.WriteString("the operator's claim to a third party's, as far as you trust the\n")
+			b.WriteString("authority that issued them. They say nothing about the records between\n")
+			b.WriteString("two anchored checkpoints beyond what the chain already says.\n\n")
+		}
 	} else {
 		b.WriteString("This bundle contains no signed checkpoints, so the chain shows internal\n")
 		b.WriteString("consistency only. It does not establish who wrote the log: anyone with\n")
 		b.WriteString("write access to the whole directory could have recomputed it.\n\n")
+	}
+	if m.SealedRecords > 0 {
+		fmt.Fprintf(&b, "%d record(s) here carry their prompts and completions encrypted, and the\n", m.SealedRecords)
+		b.WriteString("keys that open them are not in this bundle and will not be: handing over\n")
+		b.WriteString("the evidence and handing over the content are separate decisions, and this\n")
+		b.WriteString("is the first one. Do not read the absent text as content that was never\n")
+		b.WriteString("captured. Everything above about the chain holds regardless, because the\n")
+		b.WriteString("`sha256` of each request and response is taken over the bytes that crossed\n")
+		b.WriteString("the wire, before any encryption. Ask the operator if you need the text.\n\n")
 	}
 	b.WriteString("It does not prove that the log is complete. Traffic that never passed\n")
 	b.WriteString("through the proxy was never recorded, and no property of this file can tell\n")

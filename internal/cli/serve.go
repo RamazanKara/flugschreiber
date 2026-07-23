@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/RamazanKara/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/custody"
 	"github.com/RamazanKara/flugschreiber/internal/evidence"
 	"github.com/RamazanKara/flugschreiber/internal/metrics"
 	"github.com/RamazanKara/flugschreiber/internal/mockupstream"
@@ -67,6 +68,19 @@ Every flag can also be set as an environment variable, for example
 			"PEM bundle of additional roots trusted for the upstream connection")
 		upstreamSkipVerify = fs.Bool("upstream-tls-skip-verify", false,
 			"do not verify the upstream certificate; the evidence then attests to bytes from whoever answered")
+
+		signer = fs.String("signer", "",
+			"sign checkpoints through an external helper, as exec:<command>; the private key then never has to live beside the evidence")
+		signerPublicKey = fs.String("signer-public-key", "",
+			"PEM of the public key the external helper holds, so that a helper signing with the wrong key is caught at once")
+		tsaURL = fs.String("tsa-url", "",
+			"RFC 3161 timestamping authority; anchoring upgrades a checkpoint's time from this host's claim to a third party's")
+		tsaInterval = fs.Duration("tsa-interval", 0,
+			"how often to anchor a checkpoint (default 1h); an authority is somebody else's rate-limited service")
+		maxBytes = fs.Int64("retention-max-bytes", 0,
+			"size cap for the evidence directory, reported as a gauge; it never overrides the retention floor")
+		contentEncryption = fs.Bool("content-encryption", false,
+			"encrypt stored content at rest, so an erasure request can destroy a key rather than the chain")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -95,6 +109,18 @@ Every flag can also be set as an environment variable, for example
 	setString(&cfg.Deployment.Contact, *contact)
 	setString(&cfg.EventsToken, *eventsToken)
 	setString(&cfg.UpstreamCAFile, *upstreamCA)
+	setString(&cfg.Signer, *signer)
+	setString(&cfg.SignerPublicKey, *signerPublicKey)
+	setString(&cfg.TSAURL, *tsaURL)
+	if *tsaInterval != 0 {
+		cfg.TSAInterval = config.Duration(*tsaInterval)
+	}
+	if *maxBytes != 0 {
+		cfg.RetentionMaxBytes = *maxBytes
+	}
+	if *contentEncryption {
+		cfg.ContentEncryption = true
+	}
 	if *upstreamSkipVerify {
 		cfg.UpstreamTLSSkipVerify = true
 	}
@@ -148,13 +174,48 @@ Every flag can also be set as an environment variable, for example
 	// both at mode 0600. Checkpoints are what raise the chain from "nobody
 	// edited this without rewriting all of it" to "nobody rewrote this without
 	// also holding the signing key", so they are on unless switched off.
+	//
+	// An external signer replaces the local key entirely: nothing private is
+	// written to the evidence directory, which is the point of configuring one.
 	var keys *evidence.KeyPair
-	if !cfg.SigningDisabled {
+	var extSigner evidence.Signer
+	switch {
+	case cfg.SigningDisabled:
+	case cfg.Signer != "":
+		command := strings.TrimSpace(strings.TrimPrefix(cfg.Signer, config.SignerExecPrefix))
+		s, err := custody.NewExecSigner(command, cfg.SignerPublicKey)
+		if err != nil {
+			return err
+		}
+		extSigner = s
+		log.Info("signing checkpoints through an external helper",
+			slog.String("key_id", s.KeyID()),
+			slog.String("public_key", cfg.SignerPublicKey))
+	default:
 		kp, err := evidence.LoadOrCreateKeyPair(cfg.DataDir)
 		if err != nil {
 			return err
 		}
 		keys = kp
+	}
+
+	var timestamper evidence.Timestamper
+	if cfg.TSAURL != "" {
+		tsa, err := custody.NewHTTPTimestamper(cfg.TSAURL, 0)
+		if err != nil {
+			return err
+		}
+		timestamper = tsa
+		// The effective interval is logged, not the configured one: zero means
+		// "the built-in default", and a log line saying 0 would read as
+		// "anchor every checkpoint", which is the opposite of what happens.
+		interval := cfg.TSAInterval.Std()
+		if interval <= 0 {
+			interval = evidence.DefaultTSAInterval
+		}
+		log.Info("anchoring checkpoints to a timestamping authority",
+			slog.String("tsa", cfg.TSAURL),
+			slog.Duration("interval", interval))
 	}
 
 	archiver, err := buildArchiver(cfg, log)
@@ -166,7 +227,10 @@ Every flag can also be set as an environment variable, for example
 		Dir:                cfg.DataDir,
 		SegmentMaxBytes:    cfg.SegmentMaxBytes,
 		Keys:               keys,
+		Signer:             extSigner,
 		CheckpointInterval: cfg.CheckpointInterval.Std(),
+		Timestamper:        timestamper,
+		TSAInterval:        cfg.TSAInterval.Std(),
 		Archiver:           archiver,
 		ArchivePrefix:      cfg.Archive.Prefix,
 	})
@@ -210,7 +274,7 @@ Every flag can also be set as an environment variable, for example
 		return err
 	}
 
-	srv.SetMetricsCollector(evidenceCollector(srv.Metrics(), store, cfg.DataDir, recordsAtStart))
+	srv.SetMetricsCollector(evidenceCollector(srv.Metrics(), store, cfg.DataDir, recordsAtStart, cfg.RetentionMaxBytes))
 
 	httpSrv := &http.Server{
 		Addr:    cfg.Listen,
@@ -246,6 +310,15 @@ Every flag can also be set as an environment variable, for example
 		slog.String("data_dir", cfg.DataDir),
 		slog.String("content_mode", cfg.ContentMode),
 		slog.Int("retention_days", cfg.RetentionDays))
+
+	// An authority that stops answering costs anchors and never records, so it
+	// is reported at shutdown rather than turned into a failure at the time.
+	defer func() {
+		if err := store.TimestampErr(); err != nil {
+			log.Warn("checkpoint anchoring had failures; the checkpoints are signed and on disk either way",
+				slog.String("error", err.Error()))
+		}
+	}()
 
 	select {
 	case err := <-errCh:
@@ -286,8 +359,9 @@ func newLogger(level string) *slog.Logger {
 // evidenceCollector reports the state of the evidence directory as it is on
 // disk. The proxy knows what it wrote this run; only the filesystem knows what
 // every run before it left behind.
-func evidenceCollector(m *metrics.Metrics, store *evidence.Store, dir string, baseRecords uint64) func() {
+func evidenceCollector(m *metrics.Metrics, store *evidence.Store, dir string, baseRecords uint64, maxBytes int64) func() {
 	var lastCheckpoints, lastUploaded, lastSkipped, lastFailed uint64
+	var lastAnchored, lastAnchorFailed uint64
 	return func() {
 		segs, err := evidence.Segments(dir)
 		if err == nil {
@@ -298,6 +372,9 @@ func evidenceCollector(m *metrics.Metrics, store *evidence.Store, dir string, ba
 				}
 			}
 			m.SetEvidenceBytes(bytes)
+			if maxBytes > 0 {
+				m.SetEvidenceBytesOverCap(bytes - maxBytes)
+			}
 		}
 		m.SetEvidenceRecords(baseRecords + store.Appended())
 
@@ -309,6 +386,10 @@ func evidenceCollector(m *metrics.Metrics, store *evidence.Store, dir string, ba
 			}
 			lastCheckpoints = written
 		}
+
+		anchors := store.TimestampStats()
+		advance(&lastAnchored, anchors.Anchored, func() { m.TimestampAnchored(true) })
+		advance(&lastAnchorFailed, anchors.Failed, func() { m.TimestampAnchored(false) })
 
 		stats := store.ArchiveStats()
 		if stats.Backend == "" {

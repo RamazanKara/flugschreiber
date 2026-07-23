@@ -88,8 +88,11 @@ type Config struct {
 
 	// Signer selects how checkpoints are signed. Empty means the built-in
 	// file-based Ed25519 key. "exec:/path/to/helper" delegates signing to an
-	// external process, which is how key custody moves off the host.
-	Signer string `json:"signer,omitempty"`
+	// external process, which is how key custody moves off the host; that form
+	// needs SignerPublicKey, because the proxy has to know which key the helper
+	// is supposed to be holding in order to notice when it is holding another.
+	Signer          string `json:"signer,omitempty"`
+	SignerPublicKey string `json:"signer_public_key,omitempty"`
 
 	// RetentionMaxBytes caps the evidence directory size. Beyond-retention
 	// segments are deleted oldest-first until under it. It never overrides the
@@ -285,6 +288,9 @@ func (c *Config) ApplyEnv() error {
 	str("TLS_CERT_FILE", &c.TLSCertFile)
 	str("TLS_KEY_FILE", &c.TLSKeyFile)
 	str("LOG_LEVEL", &c.LogLevel)
+	str("SIGNER", &c.Signer)
+	str("SIGNER_PUBLIC_KEY", &c.SignerPublicKey)
+	str("TSA_URL", &c.TSAURL)
 	str("ORGANISATION", &c.Deployment.Organisation)
 	str("SYSTEM_NAME", &c.Deployment.SystemName)
 	str("PURPOSE", &c.Deployment.Purpose)
@@ -329,6 +335,27 @@ func (c *Config) ApplyEnv() error {
 			return fmt.Errorf("config: %sSIGNING_DISABLED: %w", EnvPrefix, err)
 		}
 		c.SigningDisabled = b
+	}
+	if v, ok := os.LookupEnv(EnvPrefix + "CONTENT_ENCRYPTION"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: %sCONTENT_ENCRYPTION: %w", EnvPrefix, err)
+		}
+		c.ContentEncryption = b
+	}
+	if v, ok := os.LookupEnv(EnvPrefix + "RETENTION_MAX_BYTES"); ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("config: %sRETENTION_MAX_BYTES: %w", EnvPrefix, err)
+		}
+		c.RetentionMaxBytes = n
+	}
+	if v, ok := os.LookupEnv(EnvPrefix + "TSA_INTERVAL"); ok {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: %sTSA_INTERVAL: %w", EnvPrefix, err)
+		}
+		c.TSAInterval = Duration(d)
 	}
 	if v, ok := os.LookupEnv(EnvPrefix + "SEGMENT_MAX_BYTES"); ok {
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -393,6 +420,61 @@ func (c *Config) Validate() error {
 	}
 	if c.ContentMode == evidence.ModeRedact && len(c.RedactPatterns) == 0 {
 		c.RedactPatterns = content.DefaultPatternNames
+	}
+	if err := c.validateCustody(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SignerExecPrefix marks a signer string as an external command. Everything
+// after it is the command line, split on whitespace.
+const SignerExecPrefix = "exec:"
+
+// validateCustody checks the signing, anchoring and size-cap settings.
+//
+// These are checked at startup rather than at first use on purpose. A signing
+// helper that turns out to be missing, or an anchoring URL that turns out to be
+// a typo, costs evidence quietly for as long as nobody looks; a refusal to
+// start costs a restart.
+func (c *Config) validateCustody() error {
+	if c.Signer != "" {
+		if !strings.HasPrefix(c.Signer, SignerExecPrefix) {
+			return fmt.Errorf(
+				"config: signer %q is not a form this build understands; use %s<command> to sign through an external helper",
+				c.Signer, SignerExecPrefix)
+		}
+		if strings.TrimSpace(strings.TrimPrefix(c.Signer, SignerExecPrefix)) == "" {
+			return fmt.Errorf("config: signer %q names no command", c.Signer)
+		}
+		if c.SignerPublicKey == "" {
+			return errors.New(
+				"config: an external signer needs signer_public_key, the PEM of the key the helper holds; " +
+					"without it a helper signing with the wrong key would go unnoticed")
+		}
+		if c.SigningDisabled {
+			return errors.New("config: signing is disabled, so the external signer would never be used")
+		}
+	}
+	if c.SignerPublicKey != "" && c.Signer == "" {
+		return errors.New("config: signer_public_key is set but no signer is; the built-in key writes its own public half")
+	}
+	if c.TSAURL != "" {
+		if err := validateHTTPURL("tsa_url", c.TSAURL); err != nil {
+			return err
+		}
+		if c.SigningDisabled {
+			return errors.New("config: signing is disabled, so there would be no checkpoints to anchor")
+		}
+		if c.TSAInterval < 0 {
+			return errors.New("config: tsa_interval cannot be negative")
+		}
+	}
+	if c.TSAInterval != 0 && c.TSAURL == "" {
+		return errors.New("config: tsa_interval is set but no timestamping authority is")
+	}
+	if c.RetentionMaxBytes < 0 {
+		return errors.New("config: retention_max_bytes cannot be negative")
 	}
 	return nil
 }

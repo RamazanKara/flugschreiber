@@ -23,6 +23,16 @@ type RetentionPolicy struct {
 	// before that segment may be deleted.
 	MinDays int
 
+	// MaxBytes caps the total size of the evidence segments. It is a pressure
+	// valve, not a second retention rule, and it never overrides MinDays:
+	// segments are removed oldest first while they are beyond retention, and
+	// when everything left is still inside retention the result says the
+	// directory is over its cap and nothing was deleted.
+	//
+	// Deciding to keep less evidence than the law requires is not a decision a
+	// tool gets to make quietly at three in the morning. Zero disables the cap.
+	MaxBytes int64
+
 	// Now is injectable so that tests do not have to wait six months.
 	Now func() time.Time
 }
@@ -73,6 +83,13 @@ type RetentionReport struct {
 	Records uint64 `json:"records"`
 	Bytes   int64  `json:"bytes"`
 
+	// MaxBytes and the two fields under it describe the size cap as it stands
+	// right now, before anything is deleted.
+	MaxBytes     int64  `json:"max_bytes,omitempty"`
+	OverCap      bool   `json:"over_cap,omitempty"`
+	BytesOverCap int64  `json:"bytes_over_cap,omitempty"`
+	CapNote      string `json:"cap_note,omitempty"`
+
 	Eligible        []string `json:"eligible,omitempty"`
 	EligibleRecords uint64   `json:"eligible_records"`
 	EligibleBytes   int64    `json:"eligible_bytes"`
@@ -117,6 +134,16 @@ type EnforceResult struct {
 
 	RetainedRecords uint64 `json:"retained_records"`
 	RetainedBytes   int64  `json:"retained_bytes"`
+
+	// MaxBytes and the three fields under it describe the size cap after this
+	// run. OverCap true means the run finished with the directory still over
+	// its cap, which can only happen when everything left is inside retention:
+	// the cap has run out of things it is allowed to delete, and CapNote says
+	// so in a sentence an operator can act on.
+	MaxBytes     int64  `json:"max_bytes,omitempty"`
+	OverCap      bool   `json:"over_cap,omitempty"`
+	BytesOverCap int64  `json:"bytes_over_cap,omitempty"`
+	CapNote      string `json:"cap_note,omitempty"`
 }
 
 // ReadLegalHold reports whether a LEGAL_HOLD file exists in dir and what it
@@ -179,7 +206,37 @@ func (p RetentionPolicy) Inspect(dir string) (*RetentionReport, error) {
 			rep.NewestTime = s.newestStr
 		}
 	}
+	p.reportCap(rep)
 	return rep, nil
+}
+
+// reportCap describes the size cap as Inspect finds it, before anything has
+// been deleted, and says what enforcement would be able to do about it.
+func (p RetentionPolicy) reportCap(rep *RetentionReport) {
+	if p.MaxBytes <= 0 {
+		return
+	}
+	rep.MaxBytes = p.MaxBytes
+	if rep.Bytes <= p.MaxBytes {
+		return
+	}
+	rep.OverCap = true
+	rep.BytesOverCap = rep.Bytes - p.MaxBytes
+
+	switch {
+	case rep.EligibleBytes >= rep.BytesOverCap:
+		rep.CapNote = fmt.Sprintf(
+			"the segments hold %d bytes, %d over the %d-byte cap; enforcement would delete %d bytes that are beyond retention, which brings the directory back under it",
+			rep.Bytes, rep.BytesOverCap, p.MaxBytes, rep.EligibleBytes)
+	case rep.EligibleBytes > 0:
+		rep.CapNote = fmt.Sprintf(
+			"the segments hold %d bytes, %d over the %d-byte cap; enforcement would delete the %d bytes that are beyond retention, which is not enough, and everything else is inside the %d-day retention floor",
+			rep.Bytes, rep.BytesOverCap, p.MaxBytes, rep.EligibleBytes, p.MinDays)
+	default:
+		rep.CapNote = fmt.Sprintf(
+			"the segments hold %d bytes, %d over the %d-byte cap, and nothing is beyond retention: every record is inside the %d-day floor, so enforcement would delete nothing",
+			rep.Bytes, rep.BytesOverCap, p.MaxBytes, p.MinDays)
+	}
 }
 
 // Enforce deletes whole segments from the front of the log once every record
@@ -195,17 +252,21 @@ func (p RetentionPolicy) Inspect(dir string) (*RetentionReport, error) {
 // The opposite order would leave a log with no anchor and no way to prove the
 // missing records were removed by policy rather than by an attacker, and that
 // damage is permanent.
-func (p RetentionPolicy) Enforce(dir string, opts EnforceOptions) (*EnforceResult, error) {
+func (p RetentionPolicy) Enforce(dir string, opts EnforceOptions) (res *EnforceResult, err error) {
 	cutoff, err := p.cutoff()
 	if err != nil {
 		return nil, err
 	}
-	res := &EnforceResult{
+	res = &EnforceResult{
 		Dir:     dir,
 		DryRun:  opts.DryRun,
 		MinDays: p.MinDays,
 		Cutoff:  cutoff.UTC().Format(time.RFC3339Nano),
 	}
+	// Every successful exit from this function has to account for the size
+	// cap, including the ones that delete nothing, because "over the cap and
+	// refusing to act" is precisely the state an operator has to be told about.
+	defer func() { p.reportCapAfter(res) }()
 
 	hold, err := ReadLegalHold(dir)
 	if err != nil {
@@ -297,6 +358,42 @@ func (p RetentionPolicy) Enforce(dir string, opts EnforceOptions) (*EnforceResul
 	}
 	syncDir(dir)
 	return res, nil
+}
+
+// reportCapAfter describes the size cap as the run leaves it.
+//
+// Enforcement deletes every segment that is beyond retention, oldest first, so
+// by the time this runs there is nothing further the cap is permitted to take:
+// what is left is either inside the retention floor or held by a legal hold.
+// Being over the cap at that point is therefore a report and never an
+// escalation. Disk pressure against a legal floor is the operator's decision,
+// and a tool that resolved it by deleting evidence early would be making the
+// one choice it must never make on its own.
+func (p RetentionPolicy) reportCapAfter(res *EnforceResult) {
+	if res == nil || p.MaxBytes <= 0 {
+		return
+	}
+	res.MaxBytes = p.MaxBytes
+	if res.RetainedBytes <= p.MaxBytes {
+		return
+	}
+	res.OverCap = true
+	res.BytesOverCap = res.RetainedBytes - p.MaxBytes
+
+	switch {
+	case res.Hold.InForce:
+		res.CapNote = fmt.Sprintf(
+			"the segments hold %d bytes, %d over the %d-byte cap, and a legal hold is in force, so nothing was deleted: %s",
+			res.RetainedBytes, res.BytesOverCap, p.MaxBytes, res.Hold.Reason)
+	case res.DryRun:
+		res.CapNote = fmt.Sprintf(
+			"after the deletions this run would make, the segments would still hold %d bytes, %d over the %d-byte cap, with everything left inside the %d-day retention floor",
+			res.RetainedBytes, res.BytesOverCap, p.MaxBytes, p.MinDays)
+	default:
+		res.CapNote = fmt.Sprintf(
+			"the segments still hold %d bytes, %d over the %d-byte cap, and everything left is inside the %d-day retention floor, so nothing further was deleted; add storage or record less, because keeping fewer than %d days of evidence is an operator's decision and not this tool's",
+			res.RetainedBytes, res.BytesOverCap, p.MaxBytes, p.MinDays, p.MinDays)
+	}
 }
 
 // lastWithRecords returns the newest scan in the run that holds at least one

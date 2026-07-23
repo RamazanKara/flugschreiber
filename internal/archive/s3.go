@@ -384,6 +384,44 @@ func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 	return true, nil
 }
 
+// Get fetches the object stored under key with a signed GET, so a deep archive
+// verification can read the bytes back and compare them against the local
+// segment. The caller closes the returned reader, which streams straight from
+// the response body rather than buffering the object in memory.
+//
+// The request is SigV4-signed exactly as HEAD is, through the same SignRequest
+// path: a GET carries no body, so the payload hash is the empty-payload
+// SHA-256. An object the bucket does not hold returns an error satisfying
+// errors.Is(err, ErrNotFound). Unlike Exists, Get does not confirm the bucket
+// behind a bodyless 404: a deep check reaches Get only for keys a preceding
+// Exists already found, so a 404 here is the object having gone missing between
+// the two calls, which is exactly a not-found.
+func (c *Client) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	objectKey, err := c.objectKey(key)
+	if err != nil {
+		return nil, err
+	}
+	build := func() (*http.Request, error) {
+		req, err := c.newRequest(ctx, http.MethodGet, objectKey, nil)
+		if err != nil {
+			return nil, err
+		}
+		return req, SignRequest(req, c.creds, c.cfg.Region, "s3", EmptyPayloadSHA256, c.now())
+	}
+
+	resp, err := c.do(ctx, "get", objectKey, build)
+	if err != nil {
+		var apiErr *Error
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			return nil, fmt.Errorf("archive: s3 get %s: %w", objectKey, ErrNotFound)
+		}
+		return nil, err
+	}
+	// do returns a 2xx response undrained, so its body is the object. The caller
+	// owns it from here and closes it; draining would discard the bytes.
+	return resp.Body, nil
+}
+
 // confirmBucket checks that the bucket is there, so that a 404 with no reason
 // in it can be read as an absent object.
 //
