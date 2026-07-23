@@ -3,7 +3,7 @@ COMMIT     ?= $(shell git rev-parse HEAD 2>/dev/null)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 IMAGE      ?= flugschreiber
 CHART      ?= deploy/helm/flugschreiber
-PKG        := github.com/flugschreiber/flugschreiber/internal/version
+PKG        := github.com/RamazanKara/flugschreiber/internal/version
 
 LDFLAGS := -s -w \
   -X $(PKG).Version=$(VERSION) \

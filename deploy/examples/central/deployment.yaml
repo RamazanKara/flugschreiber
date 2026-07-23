@@ -49,7 +49,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: flugschreiber
-          image: ghcr.io/flugschreiber/flugschreiber:0.1.0
+          image: ghcr.io/ramazankara/flugschreiber:0.1.0
           args: ["serve"]
           env:
             - name: FLUGSCHREIBER_LISTEN

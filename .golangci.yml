@@ -28,6 +28,16 @@ linters:
       exclude-functions:
         - (io.Closer).Close
         - (net/http.ResponseWriter).Write
+        # Best-effort cleanup and response-writing paths where the error has no
+        # useful reader. Writes whose errors matter are checked explicitly and
+        # an exclusion never silences a check that exists.
+        - (*os.File).Close
+        - (*net/http.Server).Shutdown
+        - os.Remove
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*encoding/json.Encoder).Encode
     revive:
       rules:
         - name: exported
@@ -38,6 +48,14 @@ linters:
       # The project documents EU regulation and uses British spelling
       # throughout ("organisation", "minimisation").
       locale: UK
+      ignore-rules:
+        # report.Artifact is an exported type; renaming the API to satisfy a
+        # spelling locale would be the tail wagging the dog.
+        - artifact
+        - artifacts
+        # CSS property and class names in the HTML renderer, not prose.
+        - color
+        - center
 
   exclusions:
     rules:
@@ -48,6 +66,8 @@ linters:
           - errcheck
           - gocritic
           - noctx
+          # bodyclose cannot see a close that happens inside a test helper.
+          - bodyclose
 
 formatters:
   enable:

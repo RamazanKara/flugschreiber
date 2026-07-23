@@ -17,7 +17,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/config"
 )
 
 //go:embed templates/*.tmpl

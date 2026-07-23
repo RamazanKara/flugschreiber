@@ -335,10 +335,10 @@ func TestNoMarginPutsTextAtTheEdgeOfThePage(t *testing.T) {
 // so printing it puts a hyphen in the middle of a word nobody wrote.
 func TestASoftHyphenIsNotPrintedAsAHyphen(t *testing.T) {
 	cases := []struct{ name, in, want string }{
-		{name: "soft hyphen", in: "Zusammen­arbeit", want: "Zusammenarbeit"},
-		{name: "zero width joiner", in: "a‍b", want: "ab"},
+		{name: "soft hyphen", in: "Zusammen\u00adarbeit", want: "Zusammenarbeit"},
+		{name: "zero width joiner", in: "a\u200db", want: "ab"},
 		{name: "a real hyphen is untouched", in: "Zusammen-arbeit", want: "Zusammen-arbeit"},
-		{name: "a non-breaking hyphen is still a substitution", in: "a‑b", want: "a[U+2011]b"},
+		{name: "a non-breaking hyphen is still a substitution", in: "a\u2011b", want: "a[U+2011]b"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -348,7 +348,7 @@ func TestASoftHyphenIsNotPrintedAsAHyphen(t *testing.T) {
 		})
 	}
 
-	doc := Doc{Blocks: []Block{Paragraph{Text: Text("Zusammen­arbeit")}}}
+	doc := Doc{Blocks: []Block{Paragraph{Text: Text("Zusammen\u00adarbeit")}}}
 	data, subs := render(t, doc, Options{Title: "x"})
 	if len(subs) != 0 {
 		t.Errorf("a soft hyphen carries nothing to see, so it is not a substitution: %v", subs)

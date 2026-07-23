@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
+// Verify checks an evidence directory offline and reports through the exit
+// status, which is what lets a CronJob or a script gate on it.
 func Verify(args []string) error {
 	fs := flag.NewFlagSet("verify", flag.ExitOnError)
 	fs.Usage = func() {

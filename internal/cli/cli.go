@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/flugschreiber/flugschreiber/internal/version"
+	"github.com/RamazanKara/flugschreiber/internal/version"
 )
 
 const usage = `flugschreiber: audit and evidence layer for self-hosted LLM serving

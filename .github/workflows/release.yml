@@ -1,0 +1,173 @@
+name: Release
+
+# Pushing a v* tag produces: cross-compiled binaries with checksums, a keyless
+# cosign signature over the checksums, a multi-arch container image on GHCR
+# signed the same way, an SBOM for source and image, the packaged Helm chart,
+# and a GitHub release carrying all of it. SECURITY.md documents how to verify;
+# this file is what makes those instructions true.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+env:
+  GO_VERSION: "1.25"
+  IMAGE: ghcr.io/ramazankara/flugschreiber
+
+jobs:
+  # The full gate runs again on the tagged commit. A release built from a
+  # commit the suite never saw is not a release.
+  test:
+    name: Test the tagged commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: |
+          if grep -q '^require' go.mod; then
+            echo "go.mod gained a dependency; releases are cut with zero" && exit 1
+          fi
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  binaries:
+    name: Binaries, checksums, chart, release
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cross-compile
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="${GITHUB_SHA}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          PKG=github.com/RamazanKara/flugschreiber/internal/version
+          LDFLAGS="-s -w -X ${PKG}.Version=${VERSION} -X ${PKG}.Commit=${COMMIT} -X ${PKG}.Date=${DATE}"
+
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS="${target%/*}"; GOARCH="${target#*/}"
+            ext=""; [ "$GOOS" = "windows" ] && ext=".exe"
+            out="dist/flugschreiber_${GOOS}_${GOARCH}"
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
+              go build -trimpath -ldflags="$LDFLAGS" -o "${out}/flugschreiber${ext}" ./cmd/flugschreiber
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
+              go build -trimpath -ldflags="$LDFLAGS" -o "${out}/proxyd${ext}" ./cmd/proxyd
+            cp README.md LICENSE SECURITY.md "${out}/"
+            if [ "$GOOS" = "windows" ]; then
+              (cd dist && zip -qr "flugschreiber_${VERSION}_${GOOS}_${GOARCH}.zip" "flugschreiber_${GOOS}_${GOARCH}")
+            else
+              tar -C dist -czf "dist/flugschreiber_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "flugschreiber_${GOOS}_${GOARCH}"
+            fi
+            rm -r "${out}"
+          done
+
+          (cd dist && sha256sum ./*.tar.gz ./*.zip > sha256sums.txt)
+
+      - name: Sign the checksums (keyless)
+        uses: sigstore/cosign-installer@v3
+      - run: |
+          cosign sign-blob --yes \
+            --output-signature dist/sha256sums.txt.sig \
+            --output-certificate dist/sha256sums.txt.pem \
+            dist/sha256sums.txt
+
+      - name: Package the Helm chart
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - run: |
+          helm package deploy/helm/flugschreiber \
+            --version "${GITHUB_REF_NAME#v}" \
+            --app-version "${GITHUB_REF_NAME}" \
+            -d dist/
+
+      - name: Source SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/flugschreiber_${{ github.ref_name }}_source.sbom.spdx.json
+
+      - name: Release notes from the changelog
+        run: |
+          awk '/^## /{n++} n==1' CHANGELOG.md | tail -n +2 > dist/release-notes.md
+          printf '\nVerification instructions are in SECURITY.md. The checksums file is signed with cosign, keyless, by this workflow.\n' >> dist/release-notes.md
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=dist/release-notes.md
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Flugschreiber ${GITHUB_REF_NAME}" \
+            --notes-file "$notes" \
+            dist/*.tar.gz dist/*.zip dist/sha256sums.txt \
+            dist/sha256sums.txt.sig dist/sha256sums.txt.pem \
+            dist/flugschreiber-*.tgz \
+            dist/*_source.sbom.spdx.json
+
+  image:
+    name: Container image, signed
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:latest
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+
+      - name: Sign the image (keyless)
+        uses: sigstore/cosign-installer@v3
+      - run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+      - name: Image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: image.sbom.spdx.json
+
+      - name: Attach the image SBOM to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in 1 2 3 4 5; do
+            gh release upload "${GITHUB_REF_NAME}" image.sbom.spdx.json --clobber && break
+            sleep 10
+          done

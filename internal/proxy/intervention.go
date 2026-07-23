@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/flugschreiber/flugschreiber/internal/content"
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
-	"github.com/flugschreiber/flugschreiber/internal/metrics"
+	"github.com/RamazanKara/flugschreiber/internal/content"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/metrics"
 )
 
 // EventsPath is the endpoint applications post oversight events to. It is

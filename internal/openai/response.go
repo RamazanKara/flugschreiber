@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // Response is the recordable content of an inference response, whether it

@@ -262,6 +262,16 @@ means being able to write oversight records into the evidence chain.
 {{- if $d -}}
 {{- $_ := set $c "deployment" $d -}}
 {{- end -}}
+{{- if and $v.config.archive $v.config.archive.backend (ne $v.config.archive.backend "none") -}}
+{{- $a := dict "backend" $v.config.archive.backend -}}
+{{- range $key, $field := dict "dir" "dir" "prefix" "prefix" "bucket" "bucket" "region" "region" "endpoint" "endpoint" "addressing" "addressing" "storageClass" "storage_class" "sse" "sse" "sseKmsKeyId" "sse_kms_key_id" "objectLockMode" "object_lock_mode" "objectLockRetainFor" "object_lock_retain_for" -}}
+{{- $value := index $v.config.archive $key -}}
+{{- if $value -}}
+{{- $_ := set $a $field $value -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $c "archive" $a -}}
+{{- end -}}
 {{- toPrettyJson $c }}
 {{- end }}
 
@@ -292,6 +302,14 @@ template in sidecar mode, so it runs in both topologies.
 
 {{- if and $central (regexMatch "^(127\\.|localhost:|\\[::1\\]:)" ($v.config.listen | toString)) -}}
 {{- fail (printf "config.listen is %q, a loopback address. Nothing outside the pod could reach the proxy, and the kubelet probes the pod IP from outside the pod, so the container would fail its liveness probe and restart forever. Use \":8080\" or \"0.0.0.0:8080\". Loopback belongs to the sidecar topology, where sidecar.listen is the value to set." $v.config.listen) -}}
+{{- end -}}
+
+{{- if and $v.config.archive $v.config.archive.backend (ne $v.config.archive.backend "none") (not $v.config.file.enabled) -}}
+{{- fail (printf "config.archive.backend is %q but config.file.enabled is false. The archive settings reach the binary only through the rendered config file, so this combination would install cleanly and archive nothing. Set config.file.enabled=true." $v.config.archive.backend) -}}
+{{- end -}}
+
+{{- if and (eq ($v.config.archive).backend "s3" | default false) (not ($v.config.archive).bucket) -}}
+{{- fail "config.archive.backend is s3 but config.archive.bucket is empty. The binary would refuse to start with the same complaint; failing here is just earlier." -}}
 {{- end -}}
 
 {{- if and (not $v.config.mockUpstream) (not $v.config.upstream) -}}

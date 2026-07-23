@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 func TestDefaultModeIsHash(t *testing.T) {

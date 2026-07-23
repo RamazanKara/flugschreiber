@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/config"
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
-	"github.com/flugschreiber/flugschreiber/internal/mockupstream"
+	"github.com/RamazanKara/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/mockupstream"
 )
 
 type harness struct {

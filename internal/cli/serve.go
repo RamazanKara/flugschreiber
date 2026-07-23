@@ -14,14 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/config"
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
-	"github.com/flugschreiber/flugschreiber/internal/metrics"
-	"github.com/flugschreiber/flugschreiber/internal/mockupstream"
-	"github.com/flugschreiber/flugschreiber/internal/proxy"
-	"github.com/flugschreiber/flugschreiber/internal/version"
+	"github.com/RamazanKara/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/metrics"
+	"github.com/RamazanKara/flugschreiber/internal/mockupstream"
+	"github.com/RamazanKara/flugschreiber/internal/proxy"
+	"github.com/RamazanKara/flugschreiber/internal/version"
 )
 
+// Serve runs the recording proxy until it is signalled to stop.
 func Serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	fs.Usage = func() {
@@ -112,7 +113,7 @@ Every flag can also be set as an environment variable, for example
 	// report) with no model server and no network.
 	var mockServer *http.Server
 	if cfg.MockUpstream {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			return fmt.Errorf("start mock upstream: %w", err)
 		}
@@ -161,7 +162,7 @@ Every flag can also be set as an environment variable, for example
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Verifying at startup answers the question an operator would otherwise
 	// only ask after an incident, and it costs a single pass over files that

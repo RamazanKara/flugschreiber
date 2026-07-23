@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flugschreiber/flugschreiber/internal/config"
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 const testToken = "test-events-token"

@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // DefaultMode is hash: integrity evidence for every interaction, no prompt or

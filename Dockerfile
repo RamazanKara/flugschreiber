@@ -17,9 +17,9 @@ COPY internal ./internal
 ENV CGO_ENABLED=0
 RUN go build -trimpath \
       -ldflags="-s -w \
-        -X github.com/flugschreiber/flugschreiber/internal/version.Version=${VERSION} \
-        -X github.com/flugschreiber/flugschreiber/internal/version.Commit=${COMMIT} \
-        -X github.com/flugschreiber/flugschreiber/internal/version.Date=${BUILD_DATE}" \
+        -X github.com/RamazanKara/flugschreiber/internal/version.Version=${VERSION} \
+        -X github.com/RamazanKara/flugschreiber/internal/version.Commit=${COMMIT} \
+        -X github.com/RamazanKara/flugschreiber/internal/version.Date=${BUILD_DATE}" \
       -o /out/flugschreiber ./cmd/flugschreiber
 
 # Staged here so the final stage can copy it with the right ownership: the base

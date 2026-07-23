@@ -65,7 +65,8 @@ type teeReadCloser struct {
 func (t *teeReadCloser) Read(p []byte) (int, error) {
 	n, err := t.rc.Read(p)
 	if n > 0 {
-		t.w.Write(p[:n])
+		// The tap's Write cannot fail and must never interrupt the relay.
+		_, _ = t.w.Write(p[:n])
 	}
 	if err != nil && err != io.EOF {
 		t.err = err

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/audit"
+	"github.com/RamazanKara/flugschreiber/internal/audit"
 )
 
 // Coverage reports what share of recorded traffic was captured and at what

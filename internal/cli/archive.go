@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/archive"
-	"github.com/flugschreiber/flugschreiber/internal/config"
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/archive"
+	"github.com/RamazanKara/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // buildArchiver turns the archive configuration into a backend, or returns nil

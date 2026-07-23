@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/flugschreiber/flugschreiber/internal/config"
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // Retention reports on, and optionally enforces, the retention policy.

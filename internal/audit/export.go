@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // secretFiles never leave the host, whatever else is in the directory.
@@ -209,7 +209,9 @@ func collect(dir string) ([]string, error) {
 
 	sortStrings(segments)
 	sortStrings(extras)
-	out := append(segments, extras...)
+	out := make([]string, 0, len(segments)+len(extras))
+	out = append(out, segments...)
+	out = append(out, extras...)
 
 	for _, name := range out {
 		if secretFiles[name] {

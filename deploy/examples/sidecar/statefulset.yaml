@@ -48,7 +48,7 @@ spec:
       terminationGracePeriodSeconds: 30
       initContainers:
         - name: flugschreiber
-          image: ghcr.io/flugschreiber/flugschreiber:0.1.0
+          image: ghcr.io/ramazankara/flugschreiber:0.1.0
           # Native sidecar. Remove this line and move the container into
           # `containers` on Kubernetes older than 1.29.
           restartPolicy: Always

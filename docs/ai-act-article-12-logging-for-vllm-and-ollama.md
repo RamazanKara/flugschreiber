@@ -37,7 +37,7 @@ For Article 12 the gaps that matter are:
 docker run -d --name flugschreiber \
   --read-only --cap-drop=ALL --security-opt=no-new-privileges \
   -p 8080:8080 -v fs-evidence:/var/lib/flugschreiber \
-  ghcr.io/flugschreiber/flugschreiber:latest \
+  ghcr.io/ramazankara/flugschreiber:latest \
   serve --upstream http://vllm:8000
 ```
 

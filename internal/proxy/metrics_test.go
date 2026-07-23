@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flugschreiber/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/config"
 )
 
 func scrape(t *testing.T, h *harness) string {

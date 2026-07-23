@@ -290,7 +290,7 @@ func (d *Dir) CleanTemp(maxAge time.Duration) (int, error) {
 		if err != nil {
 			// Gone between the walk and the stat, which is the outcome
 			// CleanTemp was after anyway.
-			return nil
+			return nil //nolint:nilerr // a vanished temp file is success here
 		}
 		if info.ModTime().After(cutoff) {
 			return nil

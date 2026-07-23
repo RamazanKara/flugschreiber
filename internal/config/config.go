@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/content"
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/content"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // EnvPrefix namespaces every environment variable this tool reads.
@@ -137,10 +137,13 @@ type Deployment struct {
 // Duration is a time.Duration that round-trips through JSON as a string.
 type Duration time.Duration
 
+// MarshalJSON renders the duration in the same "15s" form the file accepts.
 func (d Duration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Duration(d).String())
 }
 
+// UnmarshalJSON accepts either a Go duration string or a bare number of
+// seconds, because both shapes exist in the wild.
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	var s string
 	if err := json.Unmarshal(b, &s); err == nil {
@@ -159,6 +162,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// Std converts to the standard library's type.
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
 // Default returns the configuration used when nothing is specified.

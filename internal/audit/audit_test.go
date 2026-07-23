@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // fixture writes a deterministic log: two inference records in one session, an

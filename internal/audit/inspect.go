@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // Session is a reconstructed sequence of interactions and the human decisions

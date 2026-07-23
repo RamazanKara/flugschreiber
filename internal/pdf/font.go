@@ -199,10 +199,7 @@ var spaceFolds = map[rune]byte{
 	0x2007: ' ', // figure space
 	0x2009: ' ', // thin space
 	0x200A: ' ', // hair space
-	0x200B: ' ', // zero width space
 	0x202F: ' ', // narrow no-break space
-	0x2060: ' ', // word joiner
-	0xFEFF: ' ', // byte order mark used as a zero width no-break space
 }
 
 // invisible are runes that mark a position rather than print one. WinAnsi has a
@@ -213,6 +210,9 @@ var spaceFolds = map[rune]byte{
 // them loses nothing and they are not reported as substitutions.
 var invisible = map[rune]bool{
 	0x00AD: true, // soft hyphen
+	0x200B: true, // zero width space: zero width means zero ink
+	0x2060: true, // word joiner
+	0xFEFF: true, // byte order mark used as a zero width no-break space
 	0x200C: true, // zero width non-joiner
 	0x200D: true, // zero width joiner
 }

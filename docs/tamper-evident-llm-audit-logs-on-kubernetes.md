@@ -151,7 +151,7 @@ than implying the log is a transcript.
 
 In rough order of how much they help:
 
-**Object storage with a retention lock.** The S3 backend (M2) writes segments to
+**Object storage with a retention lock.** The S3 archive backend (`config.archive`) ships sealed segments to
 a bucket with Object Lock in compliance mode. The proxy can write new segments
 and cannot alter old ones, which closes the gap the hash chain leaves open.
 
@@ -259,7 +259,7 @@ By hand it is two containers and two environment variables:
             - name: OPENAI_BASE_URL
               value: http://127.0.0.1:8080/v1
         - name: flugschreiber
-          image: ghcr.io/flugschreiber/flugschreiber:latest
+          image: ghcr.io/ramazankara/flugschreiber:latest
           args: ["serve", "--listen", "127.0.0.1:8080"]
           env:
             - name: FLUGSCHREIBER_UPSTREAM

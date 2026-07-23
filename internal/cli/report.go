@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/config"
-	"github.com/flugschreiber/flugschreiber/internal/report"
-	"github.com/flugschreiber/flugschreiber/internal/version"
+	"github.com/RamazanKara/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/report"
+	"github.com/RamazanKara/flugschreiber/internal/version"
 )
 
+// Report generates the documentation artifacts from an evidence directory.
 func Report(args []string) error {
 	fs := flag.NewFlagSet("report", flag.ExitOnError)
 	fs.Usage = func() {
@@ -25,8 +26,9 @@ from the traffic that was actually observed:
   transparency-article-50-de.md     Article 50 transparency pack, German
 
 Each of those is also written as a standalone HTML page under the same name
-with a .html extension, for reading and printing without a Markdown tool. The
-Markdown is the source of truth; the pages carry no additional content.
+with a .html extension, for reading and printing without a Markdown tool, and,
+with --pdf, as a PDF. The Markdown is the source of truth; the other renderings
+carry no additional content.
 
 Sections that can be filled in from evidence and configuration are filled in.
 Everything else is marked TODO with one sentence on what belongs there. The
@@ -50,6 +52,7 @@ Flags:
 		mode       = fs.String("content-mode", "", "content mode to describe (defaults to the mode seen in the log)")
 		retention  = fs.Int("retention-days", 0, "retention to describe (default 180)")
 		nowFlag    = fs.String("now", "", "override the generation timestamp, RFC3339 (for reproducible output)")
+		pdfFlag    = fs.Bool("pdf", false, "also render each document as a PDF, using only the built-in base fonts")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -120,9 +123,28 @@ Flags:
 		return err
 	}
 
+	var pdfWarnings []string
+	if *pdfFlag {
+		pdfPaths, warnings, err := writePDFs(*out, cfg.Deployment.Organisation, "Flugschreiber "+version.String(), generated, now)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, pdfPaths...)
+		pdfWarnings = warnings
+	}
+
 	fmt.Printf("generated %d artifact(s) from %d record(s):\n\n", len(paths), summary.Records)
 	for i, p := range paths {
-		fmt.Printf("  %-46s %s\n", p, generated.Artifacts[i].Title)
+		title := ""
+		if i < len(generated.Artifacts) {
+			title = generated.Artifacts[i].Title
+		} else {
+			title = "PDF rendering"
+		}
+		fmt.Printf("  %-46s %s\n", p, title)
+	}
+	for _, w := range pdfWarnings {
+		fmt.Printf("\n  warning: %s\n", w)
 	}
 
 	fmt.Printf("\n")

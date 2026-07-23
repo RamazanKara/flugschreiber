@@ -4,7 +4,7 @@ Drafts, not scheduled copy. Read them out loud before posting, and cut anything
 that sounds like it came from a template.
 
 Do not post any of these until the repository is public, the GIF is recorded,
-and `docker run ghcr.io/flugschreiber/flugschreiber:latest` actually works for a
+and `docker run ghcr.io/ramazankara/flugschreiber:latest` actually works for a
 stranger. The fastest way to waste a Show HN is to publish it against a README
 whose first command fails.
 
@@ -33,7 +33,7 @@ one before it. Change a byte and verification fails at that record and every
 record after it.
 
   docker run -p 8080:8080 -v fs-evidence:/var/lib/flugschreiber \
-    ghcr.io/flugschreiber/flugschreiber:latest serve --mock-upstream
+    ghcr.io/ramazankara/flugschreiber:latest serve --mock-upstream
 
   export OPENAI_BASE_URL=http://localhost:8080/v1
   # ... make some calls ...
@@ -71,7 +71,7 @@ whole pitch.
 p50 overhead is about 0.5ms. Streaming is relayed frame by frame with a test
 that fails if that regresses. Apache-2.0, no telemetry, no phone-home.
 
-https://github.com/flugschreiber/flugschreiber
+https://github.com/RamazanKara/flugschreiber
 
 What I would most like from HN: if you have been through an actual AI Act or
 ISO 42001 audit, tell me what the auditor asked for that this does not record.
@@ -139,7 +139,7 @@ Apache-2.0. No telemetry, no phone-home, no SaaS.
 Article 50 transparency obligations apply from 2 August 2026 under the timeline
 following the Digital Omnibus agreement. That is closer than it reads.
 
-github.com/flugschreiber/flugschreiber
+github.com/RamazanKara/flugschreiber
 
 If you have been through an audit and can tell me what was actually asked for,
 I would rather hear that than a star.
@@ -198,7 +198,7 @@ Die Transparenzpflichten nach Artikel 50 gelten nach dem Zeitplan im Anschluss a
 die Einigung zum Digital Omnibus ab dem 2. August 2026. Das ist näher, als es
 klingt.
 
-github.com/flugschreiber/flugschreiber
+github.com/RamazanKara/flugschreiber
 
 Wenn Sie ein Audit hinter sich haben und mir sagen können, wonach tatsächlich
 gefragt wurde: Das interessiert mich mehr als ein Stern.

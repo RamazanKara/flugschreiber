@@ -15,8 +15,9 @@ func TestAppendCheckpointSyncsTheDirectory(t *testing.T) {
 	dir := t.TempDir()
 
 	var synced []string
-	syncDirObserver = func(d string) { synced = append(synced, d) }
-	t.Cleanup(func() { syncDirObserver = nil })
+	observer := func(d string) { synced = append(synced, d) }
+	syncDirObserver.Store(&observer)
+	t.Cleanup(func() { syncDirObserver.Store(nil) })
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

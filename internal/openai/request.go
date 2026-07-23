@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // Endpoint kinds Flugschreiber understands.

@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // DefaultGapThreshold is how long a stretch with no records has to be before it

@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Open a [private security advisory](https://github.com/flugschreiber/flugschreiber/security/advisories/new)
+Open a [private security advisory](https://github.com/RamazanKara/flugschreiber/security/advisories/new)
 rather than a public issue. We will acknowledge within 72 hours and aim to have
 a fix or a mitigation within 14 days for anything that lets an attacker forge,
 alter or suppress evidence.
@@ -111,8 +111,8 @@ ordering; the chain is unaffected.
 To verify a release image:
 
 ```bash
-cosign verify ghcr.io/flugschreiber/flugschreiber:VERSION \
-  --certificate-identity-regexp 'https://github.com/flugschreiber/flugschreiber/.*' \
+cosign verify ghcr.io/ramazankara/flugschreiber:VERSION \
+  --certificate-identity-regexp 'https://github.com/RamazanKara/flugschreiber/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

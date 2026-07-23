@@ -19,12 +19,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/config"
-	"github.com/flugschreiber/flugschreiber/internal/content"
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
-	"github.com/flugschreiber/flugschreiber/internal/metrics"
-	"github.com/flugschreiber/flugschreiber/internal/openai"
-	"github.com/flugschreiber/flugschreiber/internal/version"
+	"github.com/RamazanKara/flugschreiber/internal/config"
+	"github.com/RamazanKara/flugschreiber/internal/content"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/metrics"
+	"github.com/RamazanKara/flugschreiber/internal/openai"
+	"github.com/RamazanKara/flugschreiber/internal/version"
 )
 
 // prefixBytes is how much of each body is retained for parsing. Metadata such
@@ -133,7 +133,6 @@ func newTransport(cfg config.Config) http.RoundTripper {
 	return t
 }
 
-// Handler returns the full HTTP surface: health, and everything else proxied.
 // Metrics exposes the metric set so the process can update gauges the proxy
 // itself cannot observe, such as the size of the evidence directory.
 func (s *Server) Metrics() *metrics.Metrics { return s.metrics }
@@ -144,6 +143,8 @@ func (s *Server) Metrics() *metrics.Metrics { return s.metrics }
 // tick saw.
 func (s *Server) SetMetricsCollector(fn func()) { s.collect = fn }
 
+// Handler returns the full HTTP surface: health, metrics, the oversight
+// events endpoint, and everything else proxied.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	if s.cfg.MetricsEnabled {

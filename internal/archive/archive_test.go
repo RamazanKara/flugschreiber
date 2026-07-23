@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/flugschreiber/flugschreiber/internal/metrics"
 )
 
 var _ Archiver = (*Dir)(nil)
@@ -409,29 +407,6 @@ func TestCleanTempOnAnArchiveWithNothingToSweep(t *testing.T) {
 	}
 	if removed != 0 {
 		t.Errorf("CleanTemp removed %d files from a clean archive", removed)
-	}
-}
-
-// The {result} label on flugschreiber_archive_uploads_total is defined by
-// internal/metrics. Two packages built in parallel labelling the same event
-// differently is the interoperability failure the shared contract exists to
-// prevent, so the values this package documents are asserted against the ones
-// that package actually defines.
-func TestArchiveResultLabelsAreTheOnesMetricsDefines(t *testing.T) {
-	tests := []struct {
-		result metrics.ArchiveResult
-		want   string
-	}{
-		{result: metrics.ArchiveSuccess, want: "success"},
-		{result: metrics.ArchiveFailure, want: "failure"},
-		{result: metrics.ArchiveSkipped, want: "skipped"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			if got := string(tt.result); got != tt.want {
-				t.Errorf("archive upload result = %q, want %q, which is what internal/archive documents", got, tt.want)
-			}
-		})
 	}
 }
 

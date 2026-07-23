@@ -266,10 +266,11 @@ func newHistogram(bounds []float64, boundLabels []string) *Histogram {
 	}
 }
 
-// Observe records one value. A NaN is discarded: it belongs in no bucket and
-// would poison _sum for the lifetime of the process.
+// Observe records one value. A NaN or an infinity is discarded: neither
+// belongs in a real bucket, and either would poison _sum for the lifetime of
+// the process, turning every rate() over it into garbage.
 func (h *Histogram) Observe(v float64) {
-	if math.IsNaN(v) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return
 	}
 	i, _ := slices.BinarySearch(h.bounds, v)

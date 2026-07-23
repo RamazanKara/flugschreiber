@@ -95,6 +95,12 @@ teams most often miss, because it is not satisfied by a visible label alone.
 handling of the content. A visible disclaimer in the interface satisfies 50(1); it does
 not satisfy 50(2), because it does not travel with the content once it is copied out.
 
+**When it applies.** Under the Digital Omnibus, the marking duty in 50(2) applies from
+2 December 2026 for systems already on the market on 2 August 2026, four months after
+the interaction disclosure in 50(1). The deferral buys implementation time; it does not
+change what has to be built. Check the dates against the adopted text, which was still
+awaiting formal publication when this generator was released.
+
 **Approaches, roughly in order of practicality for a text-generating system:**
 
 1. **Provenance metadata (C2PA / Content Credentials).** The best developed standard for

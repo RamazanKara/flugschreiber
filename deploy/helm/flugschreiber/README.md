@@ -93,7 +93,7 @@ In `mode: sidecar` none of it is created. See "Sidecar topology" below.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `image.repository` | `ghcr.io/flugschreiber/flugschreiber` | Image repository |
+| `image.repository` | `ghcr.io/ramazankara/flugschreiber` | Image repository |
 | `image.tag` | `""` | Empty means the chart's `appVersion`, so the chart version is what moves the image |
 | `image.digest` | `""` | `sha256:...`, wins over the tag |
 | `image.pullPolicy` | `IfNotPresent` | |
@@ -182,8 +182,10 @@ Secret in the cluster and in whatever ran the install. Prefer
 | `secret.keys.*` | see values.yaml | Key names inside the Secret |
 | `secret.s3EnvNames.*` | `AWS_ACCESS_KEY_ID` and friends | Environment variable names for the S3 keys |
 
-The archive backend lands in M2. The S3 environment variable names default to
-the conventional AWS ones; check them against the release you are running.
+Configure the archive itself under `config.archive` (backend, bucket, region,
+endpoint, object lock). Only the credentials live here: they reach the pod as
+the conventional AWS environment variables, which is exactly where the built-in
+S3 client looks for them when `config.archive` names no explicit key.
 
 #### The events token
 

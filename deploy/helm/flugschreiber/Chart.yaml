@@ -9,9 +9,9 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 
-home: https://github.com/flugschreiber/flugschreiber
+home: https://github.com/RamazanKara/flugschreiber
 sources:
-  - https://github.com/flugschreiber/flugschreiber
+  - https://github.com/RamazanKara/flugschreiber
 
 keywords:
   - ai-act
@@ -23,7 +23,7 @@ keywords:
 
 maintainers:
   - name: Flugschreiber maintainers
-    url: https://github.com/flugschreiber/flugschreiber
+    url: https://github.com/RamazanKara/flugschreiber
 
 annotations:
   # A single writer owns the chain, so this chart deliberately has no

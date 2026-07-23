@@ -10,7 +10,7 @@ Go 1.25 or later. There is nothing to download, because there are no
 dependencies.
 
 ```bash
-git clone https://github.com/flugschreiber/flugschreiber
+git clone https://github.com/RamazanKara/flugschreiber
 cd flugschreiber
 make check          # format, vet, test
 make acceptance     # the quickstart, as a test

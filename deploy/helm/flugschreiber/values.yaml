@@ -38,7 +38,7 @@ commonAnnotations: {}
 
 image:
   # -- Container image repository.
-  repository: ghcr.io/flugschreiber/flugschreiber
+  repository: ghcr.io/ramazankara/flugschreiber
   # -- Image tag. Empty means the chart's appVersion, so an upgrade of the
   # chart is what moves the image, rather than a mutable tag moving under you.
   tag: ""
@@ -151,6 +151,42 @@ config:
   # Only read from the rendered config file, so it needs config.file.enabled.
   # Keep it below terminationGracePeriodSeconds.
   shutdownTimeout: ""
+
+  # Replication of sealed evidence to a second location. Never the write path:
+  # the local volume is always primary, and a broken or unreachable target can
+  # cost an upload but never a record. Credentials do not belong here; put them
+  # in `secret.s3`, which reaches the pod as the AWS environment variables the
+  # S3 client reads.
+  archive:
+    # -- none, dir or s3. `dir` archives to a second mounted volume; `s3` works
+    # against AWS S3, MinIO, Ceph RGW and other compatible stores.
+    backend: "none"
+    # -- Destination directory for the dir backend. Mount the volume yourself
+    # via extraVolumes and extraVolumeMounts.
+    dir: ""
+    # -- Key prefix, so one bucket can hold several installations.
+    prefix: ""
+    # -- Bucket name, required for the s3 backend.
+    bucket: ""
+    # -- Region. us-east-1 also satisfies stores that have no regions.
+    region: ""
+    # -- Endpoint override, e.g. https://minio.internal:9000.
+    endpoint: ""
+    # -- auto, virtual or path.
+    addressing: ""
+    # -- Passed through when set, e.g. GLACIER_IR.
+    storageClass: ""
+    # -- Server-side encryption header value, e.g. AES256 or aws:kms.
+    sse: ""
+    # -- KMS key for sse aws:kms.
+    sseKmsKeyId: ""
+    # -- GOVERNANCE or COMPLIANCE. With objectLockRetainFor, every uploaded
+    # object goes under a bucket retention period, which is the control that
+    # stops the writer altering what it already wrote. The bucket must have
+    # been created with object lock enabled.
+    objectLockMode: ""
+    # -- Retention period for object lock, e.g. "4320h" for 180 days.
+    objectLockRetainFor: ""
 
   # Organisational context. None of this changes proxy behaviour; it pre-fills
   # the documents `flugschreiber report` generates so they are not full of
@@ -359,9 +395,11 @@ startupProbe:
   failureThreshold: 30
 
 # -- Time the pod gets to finish in-flight streamed responses, drain the
-# evidence queue and fsync. 30 seconds is plenty. A clean termination loses
-# nothing.
-terminationGracePeriodSeconds: 30
+# evidence queue, fsync, and give any outstanding archive uploads their drain
+# window (30 seconds by default) before they are abandoned. A clean
+# termination loses no evidence either way; a longer grace only decides
+# whether the last sealed segment reaches the archive before restart.
+terminationGracePeriodSeconds: 60
 
 # -- Extra command line arguments appended after `serve`.
 extraArgs: []
@@ -528,9 +566,9 @@ metrics:
   # completion, a client hash or a session id. The model name is a label, which
   # is worth knowing if your model names are themselves informative.
   #
-  # Turning this off while a scrape is still configured is worth avoiding: an
-  # unmatched path is proxied upstream rather than refused, so a scrape of a
-  # metrics-less proxy arrives at the model server.
+  # With this off the proxy refuses GET /metrics with a 404 rather than
+  # forwarding it upstream, so a stale scrape config gets an error instead of
+  # the model server's own metrics under Flugschreiber's name.
   enabled: true
   # -- Path the monitors scrape. The proxy serves the exposition on /metrics
   # and has no setting to move it, so the chart refuses any other value instead

@@ -2,8 +2,8 @@
 
 **Tamper-evident audit logs and EU AI Act documentation for self-hosted LLMs. One base URL change, no application code.**
 
-[![CI](https://github.com/flugschreiber/flugschreiber/actions/workflows/ci.yml/badge.svg)](https://github.com/flugschreiber/flugschreiber/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/flugschreiber/flugschreiber.svg)](https://pkg.go.dev/github.com/flugschreiber/flugschreiber)
+[![CI](https://github.com/RamazanKara/flugschreiber/actions/workflows/ci.yml/badge.svg)](https://github.com/RamazanKara/flugschreiber/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/RamazanKara/flugschreiber.svg)](https://pkg.go.dev/github.com/RamazanKara/flugschreiber)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Somebody asked you what evidence you have of what your AI did last quarter. You
@@ -18,16 +18,14 @@ log, and it generates the technical documentation and transparency artifacts
 that AI Act preparation needs as inputs, pre-filled from traffic it actually
 observed.
 
-![demo](docs/demo.gif)
-
-<!-- Recorded with scripts/demo.sh. See "Recording the demo" below. -->
+<!-- GIF pending: record with scripts/demo.sh, see "Recording the demo" below. -->
 
 ## Sixty seconds
 
 ```bash
 docker run -d --name flugschreiber \
   -p 8080:8080 -v fs-evidence:/var/lib/flugschreiber \
-  ghcr.io/flugschreiber/flugschreiber:latest serve --mock-upstream
+  ghcr.io/ramazankara/flugschreiber:latest serve --mock-upstream
 ```
 
 Point an app at it and make a few calls:
@@ -228,7 +226,7 @@ capabilities dropped:
 docker run -d --read-only --tmpfs /tmp \
   --cap-drop=ALL --security-opt=no-new-privileges \
   -p 8080:8080 -v fs-evidence:/var/lib/flugschreiber \
-  ghcr.io/flugschreiber/flugschreiber:latest serve --upstream http://vllm:8000
+  ghcr.io/ramazankara/flugschreiber:latest serve --upstream http://vllm:8000
 ```
 
 The image is distroless static, 20 MB, with no shell and no package manager. It
@@ -284,6 +282,7 @@ critical path.
 
 ## Documentation
 
+- [ARCHITECTURE.md](ARCHITECTURE.md) is the package map and the invariants, enforced by a test
 - [docs/tamper-evident-llm-audit-logs-on-kubernetes.md](docs/tamper-evident-llm-audit-logs-on-kubernetes.md) is the Kubernetes guide
 - [MAPPING.md](MAPPING.md) maps every schema field to the provision it supports (Articles 12, 19, 26, 50) and says where the support runs out
 - [docs/SCHEMA.md](docs/SCHEMA.md) is the log format and the compatibility policy
@@ -303,12 +302,16 @@ against the current text before you plan around them.
 | 2 December 2027 | Annex III high-risk obligations |
 | 2 August 2028 | Annex I obligations |
 
+One nuance inside the first row: Article 50(2) machine-readable marking applies from
+2 December 2026 for systems already on the market on 2 August 2026, while the 50(1)
+interaction disclosure is not deferred.
+
 ## Building from source
 
 Go 1.25 or later. There are no dependencies to fetch.
 
 ```bash
-git clone https://github.com/flugschreiber/flugschreiber
+git clone https://github.com/RamazanKara/flugschreiber
 cd flugschreiber
 make build          # binaries in ./dist
 make test           # everything, with the race detector
@@ -334,7 +337,7 @@ without the typing pauses.
 | --- | --- |
 | `serve` | Run the recording proxy |
 | `verify` | Check chain integrity and checkpoint signatures, offline |
-| `report` | Generate the Annex IV skeleton and Article 50 packs, Markdown and HTML |
+| `report` | Generate the Annex IV skeleton and Article 50 packs, as Markdown and HTML, plus PDF with `--pdf` |
 | `export` | Package the evidence for a third party, without the signing key |
 | `inspect` | Reconstruct a session, including the human decisions around it |
 | `coverage` | Report what was captured, at what fidelity, and where the log is quiet |

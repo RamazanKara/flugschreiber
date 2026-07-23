@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // PruneAnchorVersion is the version of pruned.json and of its signature
@@ -209,12 +210,13 @@ func syncDir(dir string) {
 	}
 	_ = f.Sync()
 	_ = f.Close()
-	if syncDirObserver != nil {
-		syncDirObserver(dir)
+	if fn := syncDirObserver.Load(); fn != nil {
+		(*fn)(dir)
 	}
 }
 
 // syncDirObserver is nil outside tests. A directory fsync leaves nothing on
 // disk to look for afterwards, so watching the call is the only way a test can
-// hold this package to its durability claims.
-var syncDirObserver func(string)
+// hold this package to its durability claims. It is atomic so a future
+// t.Parallel in this package cannot turn the hook into a data race.
+var syncDirObserver atomic.Pointer[func(string)]

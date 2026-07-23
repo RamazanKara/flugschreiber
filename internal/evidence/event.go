@@ -1,3 +1,10 @@
+// Package evidence is the append-only, hash-chained log at the centre of
+// Flugschreiber, together with its verifier, its signed checkpoints, its
+// retention enforcement and its archival hook.
+//
+// It imports nothing from the rest of the project, deliberately: the package
+// that defines what the evidence is must stay readable and auditable on its
+// own. See ARCHITECTURE.md.
 package evidence
 
 // SchemaVersion is the version of the Event structure written to disk. It is

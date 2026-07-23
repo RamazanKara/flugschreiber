@@ -206,7 +206,7 @@ liability, and making it self-identifying costs nothing.
 
 ## D14. Module path is provisional
 
-`github.com/flugschreiber/flugschreiber`.
+`github.com/RamazanKara/flugschreiber`.
 
 Something had to be chosen in order to build. The name is a working title and
 the organisation does not exist yet.
@@ -421,3 +421,38 @@ told, and on a read-only root that has to be a mounted path.
 The documented run command therefore carries `--tmpfs /tmp`, and CI runs the
 commands inside a read-only container so that this cannot regress into a README
 that only works on a writable filesystem.
+
+## D31. The module path is github.com/RamazanKara/flugschreiber
+
+D14 left the path provisional. It is now settled, from evidence rather than
+preference: every sibling project of this repository lives under the
+maintainer's GitHub account, the account is what the local tooling is
+authenticated as, and no flugschreiber organisation exists. A module path must
+name a repository that exists on the day the first tag is pushed.
+
+Moving the repository into an organisation later stays cheap: GitHub redirects
+the old location, so clones, remotes and `go get` keep working. The module path
+itself is identity and should then stay as it is, which is the usual outcome
+for projects that started under a personal account.
+
+The container image namespace is the lowercase `ghcr.io/ramazankara/`, because
+GHCR requires lowercase; the module path keeps the account's casing because Go
+treats it as an opaque identifier and the sibling repositories already use it.
+
+## D32. PDF output ships, behind an explicit flag
+
+`flugschreiber report --pdf` renders each document with the built-in base
+fonts. It is off by default.
+
+The brief made PDF optional and the case for it is narrow but real: the person
+a compliance document is finally handed to often accepts nothing else, and an
+operator told to "just convert it" at that moment reaches for whatever is
+closest. The case against shipping it as a default is also real: a PDF is the
+rendering most likely to be treated as the original, and the Markdown is the
+original. A flag keeps the decision with the operator.
+
+Characters outside the base fonts are printed as visible [U+XXXX] markers and
+reported as warnings, never silently dropped, because a compliance document
+that quietly loses a character is worse than one that shows a seam. The PDF
+inherits the report timestamp, so --now produces byte-identical PDFs the way
+it does for Markdown and HTML.

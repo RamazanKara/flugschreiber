@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/flugschreiber/flugschreiber/internal/cli"
+	"github.com/RamazanKara/flugschreiber/internal/cli"
 )
 
 func main() {

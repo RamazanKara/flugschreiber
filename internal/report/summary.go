@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flugschreiber/flugschreiber/internal/evidence"
+	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
 // Count is one observed value and how often it was seen.

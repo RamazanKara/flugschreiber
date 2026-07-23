@@ -52,7 +52,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: verify
-              image: ghcr.io/flugschreiber/flugschreiber:0.1.0
+              image: ghcr.io/ramazankara/flugschreiber:0.1.0
               args:
                 - verify
                 - --dir
