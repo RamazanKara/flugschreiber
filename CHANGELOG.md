@@ -4,6 +4,23 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
+## Unreleased
+
+- The generated Annex IV now tells the truth about the shipped product:
+  section 3.4 reports signed checkpoints, attestation state and the key id;
+  section 3.3 describes the real enforcement path and reports a pruned log as
+  pruned; section 3.5 pre-fills observed human interventions by decision
+  instead of opening with a blank TODO.
+- `verify`'s text output states checkpoints, attestation and pruned state,
+  matching what the JSON already carried.
+- Sealed segments missed by the archive, for any reason, are queued again on
+  the next start; segments the archive already holds are skipped, not
+  overwritten.
+- `--upstream-ca` trusts an internal CA bundle for the upstream connection,
+  and `--upstream-tls-skip-verify` exists as the loudly warned last resort.
+- The Helm chart gained a retention CronJob (off by default; it deletes
+  evidence and says so) and pass-through for the upstream CA settings.
+
 ## v0.1.0, 2026-07-23
 
 First release. Everything below is new.

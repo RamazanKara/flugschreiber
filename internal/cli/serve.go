@@ -63,6 +63,10 @@ Every flag can also be set as an environment variable, for example
 			"do not sign checkpoints; the chain then proves internal consistency only")
 		checkpointEvery = fs.Duration("checkpoint-interval", 0,
 			"how often to sign the chain head while writing (default 5m)")
+		upstreamCA = fs.String("upstream-ca", "",
+			"PEM bundle of additional roots trusted for the upstream connection")
+		upstreamSkipVerify = fs.Bool("upstream-tls-skip-verify", false,
+			"do not verify the upstream certificate; the evidence then attests to bytes from whoever answered")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -90,6 +94,10 @@ Every flag can also be set as an environment variable, for example
 	setString(&cfg.Deployment.Purpose, *purpose)
 	setString(&cfg.Deployment.Contact, *contact)
 	setString(&cfg.EventsToken, *eventsToken)
+	setString(&cfg.UpstreamCAFile, *upstreamCA)
+	if *upstreamSkipVerify {
+		cfg.UpstreamTLSSkipVerify = true
+	}
 	if *noSign {
 		cfg.SigningDisabled = true
 	}
@@ -131,6 +139,9 @@ Every flag can also be set as an environment variable, for example
 
 	if err := cfg.Validate(); err != nil {
 		return err
+	}
+	if cfg.UpstreamTLSSkipVerify {
+		log.Warn("upstream TLS verification is DISABLED; the evidence will attest to bytes from whoever answers the upstream address")
 	}
 
 	// The signing key is generated on first start alongside the client salt,

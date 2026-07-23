@@ -59,6 +59,20 @@ type Summary struct {
 	HeadHash      string
 	Segments      []string
 
+	// Attestation state, copied from verification so the documentation can say
+	// what actually protects the log rather than describing a design.
+	Checkpoints         int
+	CheckpointsVerified int
+	Attested            bool
+	KeyID               string
+	Pruned              bool
+	PrunedThroughSeq    uint64
+
+	// Human oversight, tallied so Article 14 sections can state what was
+	// recorded instead of opening with a blank TODO.
+	Interventions int
+	ByDecision    []Count
+
 	Endpoints     []Count
 	Upstreams     []Count
 	ContentModes  []Count
@@ -123,6 +137,12 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 	s.ChainProblems = verified.Problems
 	s.HeadHash = verified.HeadHash
 	s.Segments = verified.Segments
+	s.Checkpoints = verified.Checkpoints
+	s.CheckpointsVerified = verified.CheckpointsVerified
+	s.Attested = verified.Attested
+	s.KeyID = verified.KeyID
+	s.Pruned = verified.Pruned
+	s.PrunedThroughSeq = verified.PrunedThroughSeq
 
 	endpoints := map[string]int{}
 	upstreams := map[string]int{}
@@ -132,6 +152,7 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 	toolsOffered := map[string]int{}
 	toolsCalled := map[string]int{}
 	eventTypes := map[string]int{}
+	decisions := map[string]int{}
 	clients := map[string]struct{}{}
 	sessions := map[string]struct{}{}
 	models := map[string]*ModelStat{}
@@ -149,6 +170,12 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 		}
 		s.LastTime = e.Record.Timestamp
 
+		if ev.EventType == evidence.EventHumanIntervention {
+			s.Interventions++
+			if ev.Decision != "" {
+				decisions[ev.Decision]++
+			}
+		}
 		if ev.EventType != evidence.EventInference {
 			return nil
 		}
@@ -244,6 +271,7 @@ func Summarise(dir string, now time.Time) (*Summary, error) {
 	s.ToolsOffered = sortCounts(toolsOffered)
 	s.ToolsCalled = sortCounts(toolsCalled)
 	s.EventTypes = sortCounts(eventTypes)
+	s.ByDecision = sortCounts(decisions)
 	s.DistinctClients = len(clients)
 	s.DistinctSessions = len(sessions)
 

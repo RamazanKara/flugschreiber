@@ -127,6 +127,28 @@ func (s *Store) archiveCheckpoints() {
 	s.enqueueUpload(s.archiveKey(key), filepath.Join(s.opts.Dir, CheckpointsFile))
 }
 
+// archiveCatchUp queues every sealed segment and the current checkpoint file,
+// so an upload that failed in an earlier run, or a run that died before its
+// shutdown drain, converges on the next start instead of leaving a permanent
+// hole in the archive. Exists makes the common case cheap: a segment already
+// in the bucket costs one HEAD and is counted as skipped.
+//
+// The enqueue is the writer-safe non-blocking one, so a backlog larger than
+// the queue converges over several restarts rather than blocking Open; what
+// could not be queued is counted and reported through ArchiveErr.
+func (s *Store) archiveCatchUp(segs []SegmentInfo) {
+	if len(segs) == 0 {
+		return
+	}
+	// The newest segment is still being appended to; shutdown snapshots it
+	// under its own key. Everything before it is sealed and final.
+	for _, seg := range segs[:len(segs)-1] {
+		name := filepath.Base(seg.Path)
+		s.enqueueUpload(s.archiveKey(name), seg.Path)
+	}
+	s.archiveCheckpoints()
+}
+
 // archivePublicKey queues the public half of the signing key. Without it the
 // archived checkpoints are unverifiable by whoever holds the bucket, which is
 // usually not the person holding the evidence directory.

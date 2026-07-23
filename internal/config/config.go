@@ -51,6 +51,16 @@ type Config struct {
 	TLSCertFile string `json:"tls_cert_file"`
 	TLSKeyFile  string `json:"tls_key_file"`
 
+	// UpstreamCAFile adds a PEM bundle to the roots trusted for the upstream
+	// connection, for model servers behind an internal certificate authority.
+	// The system pool stays trusted alongside it.
+	UpstreamCAFile string `json:"upstream_ca_file"`
+
+	// UpstreamTLSSkipVerify disables verification of the upstream certificate.
+	// The evidence then attests to bytes from whoever answered the socket, so
+	// serve logs a warning on every start with this set.
+	UpstreamTLSSkipVerify bool `json:"upstream_tls_skip_verify"`
+
 	RequestTimeout  Duration `json:"request_timeout"`
 	ShutdownTimeout Duration `json:"shutdown_timeout"`
 
@@ -220,6 +230,7 @@ func (c *Config) ApplyEnv() error {
 	str("ARCHIVE_OBJECT_LOCK_MODE", &c.Archive.ObjectLockMode)
 	str("DATA_DIR", &c.DataDir)
 	str("CONTENT_MODE", &c.ContentMode)
+	str("UPSTREAM_CA_FILE", &c.UpstreamCAFile)
 	str("TLS_CERT_FILE", &c.TLSCertFile)
 	str("TLS_KEY_FILE", &c.TLSKeyFile)
 	str("LOG_LEVEL", &c.LogLevel)
@@ -253,6 +264,13 @@ func (c *Config) ApplyEnv() error {
 			return fmt.Errorf("config: %sMETRICS_ENABLED: %w", EnvPrefix, err)
 		}
 		c.MetricsEnabled = b
+	}
+	if v, ok := os.LookupEnv(EnvPrefix + "UPSTREAM_TLS_SKIP_VERIFY"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: %sUPSTREAM_TLS_SKIP_VERIFY: %w", EnvPrefix, err)
+		}
+		c.UpstreamTLSSkipVerify = b
 	}
 	if v, ok := os.LookupEnv(EnvPrefix + "SIGNING_DISABLED"); ok {
 		b, err := strconv.ParseBool(v)

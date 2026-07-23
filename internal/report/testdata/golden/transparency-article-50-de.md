@@ -27,7 +27,7 @@ Artikel 50 Absatz 4 richtet sich an **Betreiber**, die Systeme zur Emotionserken
 zur biometrischen Kategorisierung einsetzen, sowie an Betreiber, die Inhalte erzeugen oder
 manipulieren, die einen Deepfake darstellen.
 
-*Beobachtet.* Über diese Installation wurden im Zeitraum 2026-05-04T08:31:00Z to 2026-05-04T08:35:00Z
+*Beobachtet.* Über diese Installation wurden im Zeitraum 2026-05-04T08:31:00Z to 2026-05-04T08:36:00Z
 5 Inferenz-Anfragen an 2 Endpunkt(e) weitergeleitet.
 Flugschreiber kann erkennen, dass Texte generiert werden; es kann nicht erkennen, ob die
 Ausgabe unmittelbar eine natürliche Person erreicht. Diese Einordnung müssen Sie treffen.

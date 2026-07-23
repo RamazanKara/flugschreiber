@@ -1,6 +1,10 @@
 package report
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/pem"
 	"flag"
 	"os"
 	"path/filepath"
@@ -101,6 +105,12 @@ func buildFixture(t *testing.T) string {
 		},
 	}
 
+	events = append(events, &evidence.Event{
+		EventType: evidence.EventHumanIntervention, RequestID: "int-1", SessionID: "sess-b",
+		Actor: "alice@muster.example", Decision: evidence.DecisionOverride,
+		RefRequestID: "req-3", Note: "Refund issued by hand under policy 4.2.",
+	})
+
 	for _, e := range events {
 		if err := store.Append(e); err != nil {
 			t.Fatal(err)
@@ -109,7 +119,50 @@ func buildFixture(t *testing.T) string {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
+
+	// A checkpoint from a seeded key, so the golden files can pin the attested
+	// rendering without the output changing between runs.
+	writeFixtureCheckpoint(t, dir)
 	return dir
+}
+
+// writeFixtureCheckpoint signs the fixture's chain head with a key derived
+// from a fixed seed. Determinism is the point: a random key would put a fresh
+// key id into the golden files on every regeneration.
+func writeFixtureCheckpoint(t *testing.T, dir string) {
+	t.Helper()
+
+	seed := bytes.Repeat([]byte{0x42}, ed25519.SeedSize)
+	priv := ed25519.NewKeyFromSeed(seed)
+	pub := priv.Public().(ed25519.PublicKey)
+
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	if err := os.WriteFile(filepath.Join(dir, "public-key.pem"), pemBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	head, err := evidence.Verify(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := evidence.Checkpoint{
+		Version:    evidence.CheckpointVersion,
+		Segment:    head.Segments[len(head.Segments)-1],
+		Seq:        head.LastSeq,
+		RecordHash: head.HeadHash,
+		Records:    head.Records,
+		Timestamp:  time.Date(2026, 5, 4, 8, 40, 0, 0, time.UTC).Format(time.RFC3339Nano),
+	}
+	if err := evidence.SignCheckpoint(priv, evidence.KeyID(pub), &cp); err != nil {
+		t.Fatal(err)
+	}
+	if err := evidence.AppendCheckpoint(dir, cp); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func fixtureInput(t *testing.T, dir string) Input {
@@ -268,8 +321,21 @@ func TestSummariseAggregatesTraffic(t *testing.T) {
 	if !s.ChainVerified {
 		t.Errorf("fixture chain did not verify: %v", s.ChainProblems)
 	}
-	if s.Records != 5 || s.Inference != 5 {
-		t.Errorf("Records/Inference = %d/%d, want 5/5", s.Records, s.Inference)
+	if s.Records != 6 || s.Inference != 5 {
+		t.Errorf("Records/Inference = %d/%d, want 6/5", s.Records, s.Inference)
+	}
+	if s.Interventions != 1 {
+		t.Errorf("Interventions = %d, want 1", s.Interventions)
+	}
+	if len(s.ByDecision) != 1 || s.ByDecision[0].Name != evidence.DecisionOverride {
+		t.Errorf("ByDecision = %+v, want one override", s.ByDecision)
+	}
+	if !s.Attested || s.Checkpoints != 1 || s.CheckpointsVerified != 1 {
+		t.Errorf("attestation = %v (%d/%d), want an attested fixture",
+			s.Attested, s.CheckpointsVerified, s.Checkpoints)
+	}
+	if s.KeyID == "" {
+		t.Error("KeyID is empty for an attested fixture")
 	}
 	if s.Streamed != 1 {
 		t.Errorf("Streamed = %d, want 1", s.Streamed)

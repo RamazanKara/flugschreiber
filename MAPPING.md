@@ -23,7 +23,7 @@ compatibility policy.
 | --- | --- | --- |
 | `timestamp` | RFC3339 (nanosecond) time the record was written | The proxy's clock. If the host clock is wrong or moves, the timestamp is wrong. `seq` is the reliable ordering. |
 | `seq` | Monotonic sequence number across the whole log | Ordering is by write completion, not by request arrival. Two concurrent requests are ordered by which finished first. |
-| `event_type` | `inference`, `tool_call`, `tool_result`, `human_intervention`, `session_start`, `session_end`, `config_change`, `system_event` | M1 emits `inference` only. The other types are defined in the schema and emitted by later milestones. |
+| `event_type` | `inference`, `tool_call`, `tool_result`, `human_intervention`, `session_start`, `session_end`, `config_change`, `system_event` | The proxy writes `inference`; the authenticated events endpoint records the human and lifecycle types. `tool_result` has no writer yet and is reserved. |
 | `request_id` | Unique per interaction, also returned to the caller as `X-Flugschreiber-Request-Id` | The link between an evidence record and anything your application logged about the same request. |
 | `session_id` | Groups related interactions | Only populated when the caller sends `X-Flugschreiber-Session`. The proxy cannot infer a session it is not told about. |
 | `schema_version` | Schema version of the record | |
@@ -90,7 +90,7 @@ head somewhere the proxy cannot reach. `SECURITY.md` has the rest.
 
 Where this runs out: Article 26 also covers human oversight, input data
 relevance, and informing affected persons. Flugschreiber records the
-`human_intervention` event type once you send interventions to it (M3), but it
+`human_intervention` event type once you send interventions to its events endpoint, but it
 cannot design or perform oversight.
 
 ---
@@ -142,11 +142,11 @@ Worth stating plainly, because the gaps matter more than the coverage:
 - **Whether the output was correct**, useful, harmful, or acted upon.
 - **Retrieval context**, unless it was injected into the prompt the proxy saw.
 - **Traffic that does not pass through it.** Coverage is a deployment property.
-  `flugschreiber coverage` (M3) reports what share of observed traffic was
+  `flugschreiber coverage` reports what share of observed traffic was
   captured and in which mode, but it cannot report on traffic that bypassed the
   proxy entirely. If an application talks to the model server directly,
   Flugschreiber will not know and will not say so.
 
 The last point is the one most likely to produce a false sense of coverage.
 Network policy, not this proxy, is what makes the proxy unavoidable; the Helm
-chart in M2 ships a `NetworkPolicy` for exactly this reason.
+chart ships a `NetworkPolicy` for exactly this reason.

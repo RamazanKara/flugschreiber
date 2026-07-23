@@ -175,6 +175,21 @@ cluster. It is cheap, and it pins what the log said at a known time, which is
 the only real answer to "the person who can write to the volume can rewrite the
 chain".
 
+Retention has its own CronJob, off by default because it deletes evidence:
+
+```yaml
+retention:
+  enabled: true
+  schedule: "0 3 * * *"
+```
+
+It runs `retention --enforce --confirm` against a writable mount, removes whole
+segments only when every record in them is beyond `config.retentionDays`,
+records the deletion in `pruned.json` so the surviving chain still verifies,
+and does nothing at all while a `LEGAL_HOLD` file exists. Turning it on is the
+moment the retention policy in your documentation becomes something the
+cluster actually does.
+
 The Job exits non-zero when the chain is broken, so it alerts through whatever
 already watches for failed Jobs. It runs once with no retry: `verify` is a
 deterministic function of files on disk, so a retry cannot produce a different

@@ -206,6 +206,7 @@ func Open(opts Options) (*Store, error) {
 		// goes up before the first segment rather than only at shutdown, which
 		// a crash never reaches.
 		s.archivePublicKey()
+		s.archiveCatchUp(segs)
 	}
 
 	s.wg.Add(1)

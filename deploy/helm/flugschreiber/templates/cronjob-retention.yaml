@@ -1,0 +1,111 @@
+{{- if eq .Values.mode "central" }}
+{{- if .Values.retention.enabled }}
+{{- $r := .Values.retention }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "flugschreiber.fullname" . }}-retention
+  labels:
+    {{- include "flugschreiber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: retention
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ $r.schedule | quote }}
+  {{- with $r.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  # Two enforcers deleting from the same directory at once is a race nobody
+  # needs; the second run would in any case find nothing left to do.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $r.startingDeadlineSeconds }}
+  suspend: {{ $r.suspend }}
+  # A failed enforcement run is worth a look, and the LEGAL_HOLD case exits
+  # zero deliberately: a hold doing its job is not a failure.
+  failedJobsHistoryLimit: {{ $r.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ $r.successfulJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "flugschreiber.labels" . | nindent 8 }}
+        app.kubernetes.io/component: retention
+    spec:
+      # One attempt. Enforcement is idempotent, so the next scheduled run
+      # finishes anything an interrupted one started, and the prune anchor is
+      # written before any deletion, so an interruption is diagnosable rather
+      # than damaging.
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ $r.activeDeadlineSeconds }}
+      template:
+        metadata:
+          {{- with $r.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          labels:
+            {{- include "flugschreiber.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: retention
+            {{- with $r.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "flugschreiber.serviceAccountName" . }}
+          automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+          {{- with .Values.image.pullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: retention
+              image: {{ include "flugschreiber.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - retention
+                - --dir
+                - {{ .Values.config.dataDir }}
+                - --min-days
+                - {{ .Values.config.retentionDays | quote }}
+                - --enforce
+                - --confirm
+                - --reason
+                - {{ $r.reason | quote }}
+                {{- with $r.extraArgs }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- with $r.extraEnv }}
+              env:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              resources:
+                {{- toYaml $r.resources | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              volumeMounts:
+                # Writable, unlike every other mount of this volume in the
+                # chart: deletion and the prune anchor need it. The binary
+                # still refuses to delete the active segment, anything within
+                # the retention period, or anything while LEGAL_HOLD exists.
+                - name: evidence
+                  mountPath: {{ .Values.config.dataDir }}
+          volumes:
+            - name: evidence
+              {{- include "flugschreiber.evidenceVolume" . | nindent 14 }}
+          {{- with $r.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $r.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $r.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}

@@ -83,6 +83,17 @@ func printVerify(res *evidence.VerifyResult) {
 		fmt.Printf("              %s\n", res.LastTime)
 		fmt.Printf("  head hash   %s\n", res.HeadHash)
 	}
+	if res.Pruned {
+		fmt.Printf("  pruned      through seq %d under a recorded anchor; unaltered since, not complete from the beginning\n", res.PrunedThroughSeq)
+	}
+	if res.Checkpoints > 0 {
+		fmt.Printf("  checkpoints %d, %d verified against signature and chain\n", res.Checkpoints, res.CheckpointsVerified)
+	}
+	if res.Attested {
+		fmt.Printf("  attestation attested, key id %s\n", res.KeyID)
+	} else {
+		fmt.Printf("  attestation none; the chain shows internal consistency only\n")
+	}
 	fmt.Printf("  checked in  %s\n", res.Duration)
 
 	if len(res.Problems) == 0 {

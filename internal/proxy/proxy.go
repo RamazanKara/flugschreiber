@@ -6,6 +6,8 @@ package proxy
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -107,6 +109,10 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 		return nil, fmt.Errorf("proxy: parse upstream: %w", err)
 	}
 
+	transport, err := newTransport(cfg)
+	if err != nil {
+		return nil, err
+	}
 	s.rp = &httputil.ReverseProxy{
 		Rewrite:        s.rewrite,
 		ModifyResponse: s.modifyResponse,
@@ -115,13 +121,13 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 		// what makes server-sent events arrive as they are produced instead of
 		// being buffered until the response ends.
 		FlushInterval: -1,
-		Transport:     newTransport(cfg),
+		Transport:     transport,
 		ErrorLog:      slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
 	return s, nil
 }
 
-func newTransport(cfg config.Config) http.RoundTripper {
+func newTransport(cfg config.Config) (http.RoundTripper, error) {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.MaxIdleConnsPerHost = 64
 	t.IdleConnTimeout = 90 * time.Second
@@ -130,7 +136,31 @@ func newTransport(cfg config.Config) http.RoundTripper {
 	// upstream produced, and so that SSE frames are not held back by a
 	// decompressor waiting for a block boundary.
 	t.DisableCompression = true
-	return t
+
+	if cfg.UpstreamCAFile != "" || cfg.UpstreamTLSSkipVerify {
+		tlsCfg := &tls.Config{}
+		if cfg.UpstreamCAFile != "" {
+			pool, err := x509.SystemCertPool()
+			if err != nil {
+				pool = x509.NewCertPool()
+			}
+			pemBytes, err := os.ReadFile(cfg.UpstreamCAFile)
+			if err != nil {
+				return nil, fmt.Errorf("proxy: read upstream CA %s: %w", cfg.UpstreamCAFile, err)
+			}
+			if !pool.AppendCertsFromPEM(pemBytes) {
+				return nil, fmt.Errorf("proxy: %s contains no usable PEM certificates", cfg.UpstreamCAFile)
+			}
+			tlsCfg.RootCAs = pool
+		}
+		// Verification off means the evidence attests to bytes from whoever
+		// answered the socket. The caller has been warned at startup; the
+		// setting still has to work, because the alternative operators reach
+		// for is plaintext.
+		tlsCfg.InsecureSkipVerify = cfg.UpstreamTLSSkipVerify
+		t.TLSClientConfig = tlsCfg
+	}
+	return t, nil
 }
 
 // Metrics exposes the metric set so the process can update gauges the proxy

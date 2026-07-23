@@ -152,6 +152,16 @@ config:
   # Keep it below terminationGracePeriodSeconds.
   shutdownTimeout: ""
 
+  # -- PEM bundle of additional roots trusted for the upstream connection, as
+  # a path inside the pod. Mount the bundle via extraVolumes and
+  # extraVolumeMounts; the system roots stay trusted alongside it. Only read
+  # from the rendered config file, so it needs config.file.enabled.
+  upstreamCaFile: ""
+  # -- Disable verification of the upstream certificate. The evidence then
+  # attests to bytes from whoever answered the socket, and the proxy warns at
+  # every start. Prefer upstreamCaFile.
+  upstreamTlsSkipVerify: false
+
   # Replication of sealed evidence to a second location. Never the write path:
   # the local volume is always primary, and a broken or unreachable target can
   # cost an upload but never a record. Credentials do not belong here; put them
@@ -446,6 +456,41 @@ podDisruptionBudget:
 
 # A CronJob that runs `flugschreiber verify` against a read-only mount of the
 # evidence volume and exits non-zero when the chain is broken, so a broken
+# Scheduled retention enforcement. Off by default, deliberately: this Job
+# DELETES EVIDENCE. It runs `retention --enforce --confirm` against a writable
+# mount, which removes whole segments whose every record is older than
+# config.retentionDays, records the deletion in pruned.json so the surviving
+# chain still verifies, and refuses to touch anything while a LEGAL_HOLD file
+# exists. Enabling it is the moment your retention policy becomes real; leave
+# it off and records accumulate until something else deletes them, which is a
+# data-minimisation question with your name on it either way.
+retention:
+  enabled: false
+  # -- Cron schedule. Daily at 03:00 by default.
+  schedule: "0 3 * * *"
+  # -- IANA time zone for the schedule. Empty uses the controller's zone.
+  timeZone: ""
+  # -- Reason recorded in the prune anchor alongside what was deleted.
+  reason: "scheduled retention enforcement"
+  suspend: false
+  startingDeadlineSeconds: 3600
+  activeDeadlineSeconds: 900
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 3
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+  extraArgs: []
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 # chain surfaces through whatever already alerts on failed Jobs. A verifier
 # that can write to what it verifies is not a verifier.
 verify:

@@ -198,7 +198,20 @@ Article 19 expects automatically generated logs to be kept for at least six mont
 they are under the provider's control, subject to other applicable law. Flugschreiber
 refuses to start with a retention setting below 180 days.
 
-{{ todo "Record where the evidence directory is stored, who can read it, how it is backed up, and what happens at the end of the retention period. Retention enforcement and legal hold are configured but not yet automated by this version, so deletion is currently your operational responsibility." }}
+{{ if $s.Pruned -}}
+This log has been pruned: records through sequence {{ $s.PrunedThroughSeq }} were deleted
+under the retention policy, and `pruned.json` records that deletion so the surviving
+chain still verifies. The log is unaltered since that pruning and is not complete from
+the beginning; those are different claims, and only the first one is made here.
+{{- end }}
+
+Enforcement is `flugschreiber retention --enforce --confirm`, which deletes whole
+segments only, oldest first, and only when every record in them is beyond the
+retention period. A `LEGAL_HOLD` file in the evidence directory blocks all deletion
+while it exists. Nothing deletes evidence without those two explicit flags, whether
+typed by a person or scheduled as a job.
+
+{{ todo "Record where the evidence directory is stored, who can read it, how it is backed up, and who or what runs retention enforcement on what schedule. If nothing runs it, records past the retention period accumulate until something does, which is a data-minimisation question, not a tooling one." }}
 
 ### 3.4 Integrity mechanism
 
@@ -211,6 +224,9 @@ that point and at every point after it.
 | Verification result | {{ if $s.ChainVerified }}**intact**, every record hash and link verified{{ else }}**FAILED**{{ end }} |
 | Segments | {{ len $s.Segments }} ({{ join ", " $s.Segments }}) |
 | Chain head hash | `{{ orNA $s.HeadHash }}` |
+| Signed checkpoints | {{ if gt $s.Checkpoints 0 }}{{ $s.Checkpoints }}, of which {{ $s.CheckpointsVerified }} verified against both the signature and the chain{{ else }}none recorded{{ end }} |
+| Attestation | {{ if $s.Attested }}**attested**: at least one Ed25519 checkpoint signature verified and matches the chain{{ else }}not attested; the chain shows internal consistency only{{ end }} |
+| Signing key id | {{ if $s.KeyID }}`{{ $s.KeyID }}`{{ else }}none{{ end }} |
 | Verified at | {{ stamp .Now }} |
 
 {{ if not $s.ChainVerified }}
@@ -233,11 +249,38 @@ The verifier reads only the files on disk. It needs no running server and no acc
 your infrastructure, so the check can be repeated by an auditor holding nothing but a copy
 of the log.
 
-{{ todo "This version chains records but does not yet sign checkpoints. Until signed checkpoints ship, the chain proves internal consistency. It detects modification of the log, but someone with write access to the whole directory could in principle rewrite it end to end. Record what protects the directory itself: append-only storage, write-once object locks, off-host replication, or restricted filesystem permissions." }}
+{{ if $s.Attested -}}
+The chain plus the verified checkpoints mean this log cannot have been rewritten by
+anyone who did not also hold the signing key. What remains open is the key's custody,
+which is the security boundary.
+{{- else if gt $s.Checkpoints 0 -}}
+Checkpoints are present but none verified against both the signature and the chain,
+which is worth investigating before relying on this log; see the problems above.
+{{- else -}}
+No signed checkpoints were recorded, so this chain shows internal consistency only:
+nobody edited it without rewriting all of it, but someone with write access to the
+whole directory could have rewritten all of it. Checkpoint signing is on by default;
+if it was disabled deliberately, record why.
+{{- end }}
+
+{{ todo "Record what protects the evidence directory and the signing key: append-only or object-lock storage, off-host replication of sealed segments, restricted filesystem permissions, and where the key lives relative to the evidence. A key kept beside the log protects against much less than a key kept elsewhere." }}
 
 ### 3.5 Human oversight
 
-{{ todo "Describe how a human can understand, question, override or shut down this system's output, and who that human is. Article 14 asks for oversight that is effective in practice, not just available in principle. Flugschreiber can record human interventions as evidence once you send them to its intervention endpoint, but it cannot design the oversight itself." }}
+{{ if gt $s.Interventions 0 -}}
+*Observed.* {{ $s.Interventions }} human intervention record(s) were written to the
+evidence chain during the window{{ if $s.ByDecision }}: {{ joinCounts $s.ByDecision }}{{ end }}.
+Each carries the actor, the decision, and the interaction it concerns, in the same
+tamper-evident chain as the interactions themselves.
+
+{{ todo "Describe the oversight process those records come from: who the actors are, what authority they have, and what triggers a review. Recorded interventions evidence that oversight happened; they do not describe how it is organised." }}
+{{- else -}}
+No human intervention records were written to the evidence chain during the window.
+The recording endpoint exists and is documented; whether that means oversight did not
+happen or happened without being recorded is a question this document has to answer.
+
+{{ todo "Describe how a human can understand, question, override or shut down this system's output, and who that human is. Article 14 asks for oversight that is effective in practice, not just available in principle. Flugschreiber records interventions sent to its events endpoint, but it cannot design the oversight itself." }}
+{{- end }}
 
 ### 3.6 Accuracy, robustness and cybersecurity
 

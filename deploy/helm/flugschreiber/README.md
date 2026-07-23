@@ -187,6 +187,15 @@ endpoint, object lock). Only the credentials live here: they reach the pod as
 the conventional AWS environment variables, which is exactly where the built-in
 S3 client looks for them when `config.archive` names no explicit key.
 
+#### Scheduled retention enforcement
+
+`retention.enabled=true` adds a CronJob that runs
+`retention --enforce --confirm` daily against a writable evidence mount. It is
+off by default because it deletes evidence: whole segments only, oldest first,
+only when every record in them is beyond `config.retentionDays`, never while a
+`LEGAL_HOLD` file exists, and always leaving `pruned.json` behind so the
+surviving chain verifies as pruned rather than broken.
+
 #### The events token
 
 `POST /flugschreiber/v1/events` records what a human did about a model output:

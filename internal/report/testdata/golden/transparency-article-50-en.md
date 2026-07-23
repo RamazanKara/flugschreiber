@@ -27,7 +27,7 @@ categorisation systems, and to deployers who generate or manipulate content cons
 deep fake.
 
 *Observed.* This deployment routed 5 inference requests through
-2 endpoint(s) during 2026-05-04T08:31:00Z to 2026-05-04T08:35:00Z. Flugschreiber can see that text
+2 endpoint(s) during 2026-05-04T08:31:00Z to 2026-05-04T08:36:00Z. Flugschreiber can see that text
 generation is happening; it cannot see whether the output reaches a natural person
 directly. That determination is yours.
 

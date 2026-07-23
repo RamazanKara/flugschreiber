@@ -236,6 +236,12 @@ means being able to write oversight records into the evidence chain.
 {{- if not $v.config.mockUpstream -}}
 {{- $_ := set $c "upstream" $v.config.upstream -}}
 {{- end -}}
+{{- with $v.config.upstreamCaFile -}}
+{{- $_ := set $c "upstream_ca_file" . -}}
+{{- end -}}
+{{- if $v.config.upstreamTlsSkipVerify -}}
+{{- $_ := set $c "upstream_tls_skip_verify" true -}}
+{{- end -}}
 {{- with $v.config.redactPatterns -}}
 {{- $_ := set $c "redact_patterns" . -}}
 {{- end -}}
