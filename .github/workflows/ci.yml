@@ -63,9 +63,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-      - uses: golangci/golangci-lint-action@v6
+      # Action v8 for the v2 binary line; the pinned version matches the one
+      # the repository is linted with locally, built against the same Go, so
+      # the gate cannot drift from the development environment.
+      - uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.12.2
 
   # The acceptance demo is the definition of done, so it gates every merge on
   # the same platforms users run it on.

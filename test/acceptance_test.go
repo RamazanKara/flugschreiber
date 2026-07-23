@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -235,7 +236,14 @@ func TestProxyOverheadStaysUnderBudget(t *testing.T) {
 
 func buildBinary(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "flugschreiber")
+	name := "flugschreiber"
+	if runtime.GOOS == "windows" {
+		// Windows resolves executables by extension; without it the spawn
+		// fails with "executable file not found", which the first real
+		// Windows CI run demonstrated.
+		name += ".exe"
+	}
+	bin := filepath.Join(t.TempDir(), name)
 	cmd := exec.Command("go", "build", "-o", bin, "../cmd/flugschreiber")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
