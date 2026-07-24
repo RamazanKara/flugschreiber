@@ -4,7 +4,11 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
-## Unreleased
+## v0.4.0, 2026-07-24
+
+The three milestones below were planned as separate releases and built and
+shipped together, so they carry one tag. The groupings are kept because they
+say what each part is for.
 
 ### v0.2.0 Coverage
 
