@@ -107,6 +107,9 @@ const (
 	CaptureErrorBodyRead CaptureErrorReason = "body_read_failed"
 	// CaptureErrorUpstreamFailed means no response was received to record.
 	CaptureErrorUpstreamFailed CaptureErrorReason = "upstream_failed"
+	// CaptureErrorAbandoned means the proxy stopped while the interaction was
+	// still being relayed, so the record holds what had been captured by then.
+	CaptureErrorAbandoned CaptureErrorReason = "abandoned_at_shutdown"
 	// CaptureErrorEncryptFailed means stored content could not be sealed. The
 	// record is still appended, without the text, because the evidence that the
 	// interaction happened is worth more than its content.
@@ -461,7 +464,8 @@ func normalizeMethod(method string) string {
 
 func normalizeReason(r CaptureErrorReason) CaptureErrorReason {
 	switch r {
-	case CaptureErrorAppendFailed, CaptureErrorBodyRead, CaptureErrorUpstreamFailed, CaptureErrorEncryptFailed:
+	case CaptureErrorAppendFailed, CaptureErrorBodyRead, CaptureErrorUpstreamFailed,
+		CaptureErrorEncryptFailed, CaptureErrorAbandoned:
 		return r
 	}
 	return CaptureErrorUnknown

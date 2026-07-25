@@ -65,6 +65,17 @@ type SessionEntry struct {
 	ContentState string `json:"content_state,omitempty"`
 	ErasedAt     string `json:"erased_at,omitempty"`
 
+	// Truncated says the text shown is a prefix of what crossed the wire. The
+	// record carries the flag and nothing used to read it, so a 409 KB
+	// completion rendered as 256 KB of transcript with no marker, beside a
+	// digest that will not reproduce from what the reader was shown.
+	Truncated bool `json:"truncated,omitempty"`
+
+	// Severity is the incident classification. The closed set exists to make
+	// incidents countable, and an inspect that drops it is inconsistent with
+	// the report, which does surface it.
+	Severity string `json:"severity,omitempty"`
+
 	ToolCalls []evidence.ToolCall `json:"tool_calls,omitempty"`
 
 	Actor        string `json:"actor,omitempty"`
@@ -98,9 +109,13 @@ func Reconstruct(dir string, q Query) (*Session, error) {
 	// conversation.
 	keys, decryptor := openKeystore(dir)
 
+	seen := sessionRequests{}
 	err := evidence.Walk(dir, func(e evidence.Entry) error {
-		if !matches(e.Event, q) {
+		if !matches(e.Event, q, seen) {
 			return nil
+		}
+		if e.Event.RequestID != "" {
+			seen[e.Event.RequestID] = struct{}{}
 		}
 		if q.Limit > 0 && len(s.Entries) >= q.Limit {
 			return nil
@@ -120,6 +135,7 @@ func Reconstruct(dir string, q Query) (*Session, error) {
 			Error:        ev.Error,
 			ToolCalls:    ev.ToolCalls,
 			Actor:        ev.Actor,
+			Severity:     ev.Severity,
 			Decision:     ev.Decision,
 			Note:         ev.Note,
 			RefRequestID: ev.RefRequestID,
@@ -163,6 +179,11 @@ func Reconstruct(dir string, q Query) (*Session, error) {
 				entry.OutputHash = out.SHA256
 				entry.Output = out.Text
 			}
+			for _, pl := range []*evidence.Payload{ev.Content.Input, ev.Content.Output} {
+				if pl != nil && pl.Truncated {
+					entry.Truncated = true
+				}
+			}
 		}
 		if len(entry.Input) > 0 || entry.Output != "" {
 			s.ContentAvailable = true
@@ -188,10 +209,26 @@ func Reconstruct(dir string, q Query) (*Session, error) {
 	return s, nil
 }
 
-func matches(ev evidence.Event, q Query) bool {
+// sessionRequests is the set of request ids a session query has already seen,
+// so that oversight attached by ref_request_id is pulled in with it.
+type sessionRequests map[string]struct{}
+
+func matches(ev evidence.Event, q Query, seen sessionRequests) bool {
 	switch {
 	case q.SessionID != "":
-		return ev.SessionID == q.SessionID
+		if ev.SessionID == q.SessionID {
+			return true
+		}
+		// An intervention or an incident is posted against a request id and
+		// usually carries no session of its own, so an exact session match
+		// returns a clean transcript with nothing escalated in it. That reads
+		// as "nothing happened here", which is the opposite of the truth and
+		// the opposite of what inspect promises.
+		if ev.RefRequestID != "" && seen != nil {
+			_, ok := seen[ev.RefRequestID]
+			return ok
+		}
+		return false
 	case q.RequestID != "":
 		return ev.RequestID == q.RequestID || ev.RefRequestID == q.RequestID
 	default:
@@ -237,8 +274,17 @@ func (s *Session) Render(w *strings.Builder) {
 			if e.RefRequestID != "" {
 				fmt.Fprintf(w, "     concerning request %s\n", e.RefRequestID)
 			}
+			if e.Severity != "" {
+				fmt.Fprintf(w, "     severity %s\n", e.Severity)
+			}
 			if e.Note != "" {
 				fmt.Fprintf(w, "     %s\n", e.Note)
+			}
+			// Said before the text rather than after it, because a reader who
+			// has already read a prefix as the whole answer has drawn the
+			// conclusion the marker exists to prevent.
+			if e.Truncated {
+				fmt.Fprintf(w, "     TRUNCATED: the text below is a prefix of what crossed the wire; the sha256 covers the whole of it\n")
 			}
 		default:
 			if e.Model != "" {
@@ -271,8 +317,17 @@ func (s *Session) Render(w *strings.Builder) {
 				}
 				w.WriteString("\n")
 			}
+			if e.Severity != "" {
+				fmt.Fprintf(w, "     severity %s\n", e.Severity)
+			}
 			if e.Note != "" {
 				fmt.Fprintf(w, "     %s\n", e.Note)
+			}
+			// Said before the text rather than after it, because a reader who
+			// has already read a prefix as the whole answer has drawn the
+			// conclusion the marker exists to prevent.
+			if e.Truncated {
+				fmt.Fprintf(w, "     TRUNCATED: the text below is a prefix of what crossed the wire; the sha256 covers the whole of it\n")
 			}
 			// "not retained" is only true when nothing was ever captured.
 			// Saying it about erased or sealed content would tell a reader the

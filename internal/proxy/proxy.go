@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -59,6 +60,14 @@ type Server struct {
 	// never staler than the scrape that reads it.
 	collect func()
 
+	// live tracks interactions being relayed right now, so that a shutdown can
+	// record the ones it is about to abandon. A record is written when the
+	// response body closes, which for a streamed completion can be minutes
+	// after the request arrived and may never happen at all if the process is
+	// stopped first.
+	liveMu sync.Mutex
+	live   map[*capture]struct{}
+
 	captureErrors atomic.Uint64
 }
 
@@ -84,6 +93,11 @@ type capture struct {
 	// routed on an empty model.
 	modelPeekTruncated bool
 
+	// peekedModel is what the tolerant scanner read for routing. It is kept so
+	// the record can fall back to it when the full parse fails, which is what
+	// happens to any body over the parse cap.
+	peekedModel string
+
 	reqTap  *tap
 	respTap *tap
 
@@ -91,7 +105,69 @@ type capture struct {
 	ttfb   time.Duration
 
 	finished atomic.Bool
+
+	// abandoned marks an interaction the shutdown cut short, so the record can
+	// say so rather than presenting a partial capture as a complete one.
+	abandoned bool
 }
+
+// track registers an interaction as in flight.
+func (s *Server) track(c *capture) {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	if s.live == nil {
+		s.live = map[*capture]struct{}{}
+	}
+	s.live[c] = struct{}{}
+}
+
+// untrack removes one, whether it completed or was abandoned.
+func (s *Server) untrack(c *capture) {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	delete(s.live, c)
+}
+
+// AbandonInFlight records the interactions still being relayed when the server
+// stops, and reports how many there were.
+//
+// Without this they are lost in silence. The record is written when the
+// response body closes, so a completion that is still streaming at shutdown
+// leaves no record, no error, no metric and no log line: the interaction
+// happened, the client got most of an answer, and the evidence says the traffic
+// never existed. One replica is the supported topology, so every image bump and
+// node drain passes through exactly this window.
+//
+// What is written is what was captured up to the interruption, marked truncated
+// and carrying a capture error, because a partial record that says it is
+// partial is evidence and a missing record is not.
+func (s *Server) AbandonInFlight() int {
+	s.liveMu.Lock()
+	pending := make([]*capture, 0, len(s.live))
+	for c := range s.live {
+		pending = append(pending, c)
+	}
+	s.live = nil
+	s.liveMu.Unlock()
+
+	var n int
+	for _, c := range pending {
+		if !c.finished.CompareAndSwap(false, true) {
+			continue
+		}
+		c.abandoned = true
+		if c.status == 0 {
+			c.status = 499
+		}
+		s.record(c, nil, errShutdownAbandoned)
+		n++
+	}
+	return n
+}
+
+// errShutdownAbandoned is the reason recorded against an interaction the
+// shutdown cut short.
+var errShutdownAbandoned = errors.New("the proxy stopped while this interaction was still being relayed, so what is recorded here is what had been captured at that point")
 
 // New builds a Server. The evidence store is owned by the caller; the proxy
 // only appends to it.
@@ -313,6 +389,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	model, peekTrunc, prefix, body := peekModel(r.Body)
 	r.Body = body
 	c.modelPeekTruncated = peekTrunc
+	c.peekedModel = model
 
 	rt := s.router.selectRoute(model, kind)
 	if rt == nil {
@@ -336,6 +413,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("X-Flugschreiber-Request-Id", c.requestID)
+	s.track(c)
 	rt.rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), captureKey{}, c)))
 }
 
@@ -393,11 +471,34 @@ func (s *Server) finish(c *capture, resp *http.Response, streamErr error) {
 	if !c.finished.CompareAndSwap(false, true) {
 		return
 	}
+	s.untrack(c)
+	s.record(c, resp, streamErr)
+}
 
+// record assembles and appends the evidence for one interaction.
+func (s *Server) record(c *capture, resp *http.Response, streamErr error) {
 	reqSum, reqBytes, reqPrefix, reqTrunc := c.reqTap.snapshot()
 	respSum, respBytes, respPrefix, respTrunc := c.respTap.snapshot()
 
+	// An interaction the shutdown cut short holds only what had crossed the
+	// wire by then. The digest covers those bytes and not the exchange the
+	// client saw, so the payload is marked truncated and the interruption is
+	// counted, or the record would present a fragment as the whole thing.
+	if c.abandoned {
+		respTrunc = true
+		s.captureErrors.Add(1)
+		s.metrics.CaptureError(metrics.CaptureErrorAbandoned)
+	}
+
 	parsedReq := openai.ParseRequest(c.kind, reqPrefix)
+	// A body over the parse cap yields a zero Request, so model_requested and
+	// params vanish from the record. The tolerant scanner already found the
+	// model in the same bytes in order to route the request, which made the
+	// record less accurate than the decision taken from it. A base64 image turn
+	// is exactly the payload that clears the cap.
+	if parsedReq.Model == "" && c.peekedModel != "" {
+		parsedReq.Model = c.peekedModel
+	}
 
 	streamed := parsedReq.Stream
 	if resp != nil && strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {

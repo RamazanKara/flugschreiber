@@ -21,6 +21,7 @@ type harness struct {
 	proxy   *httptest.Server
 	dataDir string
 	store   *evidence.Store
+	srv     *Server
 }
 
 func newHarness(t *testing.T, upstream http.Handler, tune func(*config.Config)) *harness {
@@ -53,7 +54,7 @@ func newHarness(t *testing.T, upstream http.Handler, tune func(*config.Config)) 
 	ps := httptest.NewServer(srv.Handler())
 	t.Cleanup(ps.Close)
 
-	return &harness{t: t, proxy: ps, dataDir: dir, store: store}
+	return &harness{t: t, proxy: ps, dataDir: dir, store: store, srv: srv}
 }
 
 func (h *harness) post(path, body string, headers map[string]string) *http.Response {

@@ -335,6 +335,14 @@ Every flag can also be set as an environment variable, for example
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Warn("graceful shutdown timed out", slog.String("error", err.Error()))
 	}
+	// Whatever was still being relayed when the grace period ran out is
+	// recorded now, as a partial capture that says it is partial. Dropping it
+	// would mean the interaction happened, the client saw most of an answer,
+	// and the evidence says the traffic never existed.
+	if n := srv.AbandonInFlight(); n > 0 {
+		log.Warn("interactions were still in flight at shutdown and are recorded as truncated",
+			slog.Int("count", n))
+	}
 	if mockServer != nil {
 		mockServer.Shutdown(shutdownCtx)
 	}
