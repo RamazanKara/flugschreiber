@@ -593,24 +593,32 @@ func snapshotDir(t *testing.T, dir string) map[string]string {
 	return out
 }
 
+// wrappedKeyOnDisk returns the wrapped material for one key, from wherever it
+// currently sits. A key that has not been folded in yet is in the journal, and
+// for the purpose of "did the material really leave the disk" the two files are
+// one store.
 func wrappedKeyOnDisk(t *testing.T, path, keyID string) string {
 	t.Helper()
-	raw, err := os.ReadFile(path)
+	if raw, err := os.ReadFile(path); err == nil {
+		var f contentKeystoreFile
+		if err := json.Unmarshal(raw, &f); err != nil {
+			t.Fatal(err)
+		}
+		if entry, ok := f.Keys[keyID]; ok && entry.Wrapped != "" {
+			return entry.Wrapped
+		}
+	}
+	journal, err := readJournal(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var f contentKeystoreFile
-	if err := json.Unmarshal(raw, &f); err != nil {
-		t.Fatal(err)
+	for _, e := range journal {
+		if e.KeyID == keyID && e.Wrapped != "" {
+			return e.Wrapped
+		}
 	}
-	entry, ok := f.Keys[keyID]
-	if !ok {
-		t.Fatalf("key %s is not in %s", keyID, path)
-	}
-	if entry.Wrapped == "" {
-		t.Fatalf("key %s has no wrapped material on disk", keyID)
-	}
-	return entry.Wrapped
+	t.Fatalf("key %s is in neither %s nor %s", keyID, path, ContentJournalFile)
+	return ""
 }
 
 func randomKey(t *testing.T) []byte {

@@ -105,6 +105,10 @@ type ContentKeystore struct {
 	// destroyed must not survive in a cache.
 	bySession map[string]string
 	unwrapped map[string][]byte
+
+	// journalled counts keys appended since the last compaction, which is what
+	// decides when the next write folds them in.
+	journalled int
 }
 
 // contentKeyEntry is one live key as it sits on disk. It is unexported, and the
@@ -291,7 +295,13 @@ func (k *ContentKeystore) KeyFor(sessionID, requestID string) ([]byte, string, e
 	}
 	k.unwrapped[id] = key
 
-	if err := k.saveLocked(); err != nil {
+	// Appending is O(1); folding the journal in is not, so it happens rarely
+	// and never on the request that happened to cross the threshold first.
+	save := k.appendJournal
+	if k.journalled >= contentJournalCompactAt {
+		save = func(contentKeyEntry) error { return k.compactLocked() }
+	}
+	if err := save(k.file.Keys[id]); err != nil {
 		// The key never reached the disk, so nothing may be sealed under it:
 		// a record whose key is not in the keystore is a record nobody can
 		// read and nobody can erase either.
@@ -414,7 +424,7 @@ func (k *ContentKeystore) Erase(req ContentErasureRequest) (*ContentErasureResul
 		}
 		k.file.Erased = append(k.file.Erased, tomb)
 	}
-	if err := k.saveLocked(); err != nil {
+	if err := k.compactLocked(); err != nil {
 		// The in-memory state is now ahead of the disk, so it is reloaded
 		// rather than left claiming a destruction the file does not record.
 		if reloadErr := k.loadLocked(); reloadErr != nil {
@@ -447,7 +457,7 @@ func (k *ContentKeystore) MarkRecorded(keyIDs []string) error {
 	if !changed {
 		return nil
 	}
-	return k.saveLocked()
+	return k.compactLocked()
 }
 
 // SessionsWithKeys lists the sessions this keystore still holds a key for, in
@@ -595,6 +605,7 @@ func (k *ContentKeystore) loadLocked() error {
 	k.master = master
 	k.bySession = map[string]string{}
 	k.unwrapped = map[string][]byte{}
+	k.journalled = 0
 	for id, e := range f.Keys {
 		if e.KeyID != id {
 			return fmt.Errorf(
@@ -603,6 +614,38 @@ func (k *ContentKeystore) loadLocked() error {
 		}
 		if e.SessionID != "" {
 			k.bySession[e.SessionID] = id
+		}
+	}
+
+	// Keys minted since the last compaction live in the journal. Replaying them
+	// after the base is what makes an append durable without a rewrite, and a
+	// key that is already in the base is simply overwritten with itself, which
+	// is what makes a crash between the two writes harmless.
+	journal, err := readJournal(k.path)
+	if err != nil {
+		return err
+	}
+	for _, e := range journal {
+		if existing, ok := k.file.Keys[e.KeyID]; ok && existing.Wrapped != e.Wrapped {
+			return fmt.Errorf(
+				"evidence: %s and %s disagree about key %s; refusing to guess which wrapping the records were sealed under",
+				ContentJournalFile, filepath.Base(k.path), e.KeyID)
+		}
+		k.file.Keys[e.KeyID] = e
+		if e.SessionID != "" {
+			k.bySession[e.SessionID] = e.KeyID
+		}
+	}
+	k.journalled = len(journal)
+
+	// A tombstone always wins over a key of the same id. Without this an
+	// erasure followed by a crash before compaction would resurrect a key the
+	// operator told a data subject was destroyed.
+	for _, tomb := range k.file.Erased {
+		delete(k.file.Keys, tomb.KeyID)
+		delete(k.unwrapped, tomb.KeyID)
+		if tomb.SessionID != "" && k.bySession[tomb.SessionID] == tomb.KeyID {
+			delete(k.bySession, tomb.SessionID)
 		}
 	}
 	return nil

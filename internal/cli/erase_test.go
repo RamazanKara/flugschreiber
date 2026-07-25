@@ -690,6 +690,27 @@ func wrappedKeyMaterial(t *testing.T, path string) []string {
 	for _, e := range f.Keys {
 		out = append(out, e.Wrapped)
 	}
+	// Keys minted since the last compaction are in the journal, not the base
+	// file, and they are just as much key material.
+	journal := filepath.Join(filepath.Dir(path), evidence.ContentJournalFile)
+	if raw, err := os.ReadFile(journal); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			var entry struct {
+				Key struct {
+					Wrapped string `json:"wrapped_key"`
+				} `json:"key"`
+			}
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				t.Fatal(err)
+			}
+			if entry.Key.Wrapped != "" {
+				out = append(out, entry.Key.Wrapped)
+			}
+		}
+	}
 	if len(out) < 2 {
 		t.Fatal("the keystore holds no wrapped key to check against")
 	}

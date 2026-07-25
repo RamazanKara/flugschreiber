@@ -29,8 +29,11 @@ var secretFiles = map[string]bool{
 
 	// The content keystore opens every sealed prompt in the log. Handing over
 	// the evidence and handing over the content are separate decisions, and an
-	// export is only ever the first one.
+	// export is only ever the first one. Its journal holds the same material
+	// for keys that have not been folded in yet, so it is a secret on exactly
+	// the same footing.
 	evidence.ContentKeystoreFile: true,
+	evidence.ContentJournalFile:  true,
 }
 
 // BundleManifest describes an evidence export so a recipient can tell whether
