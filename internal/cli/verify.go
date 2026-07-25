@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
@@ -24,7 +25,10 @@ number is missing.
 This reads only the files on disk. It needs no running server and no access to
 the system that produced the log, so a third party can run it against a copy.
 
-Exit status is 0 when the chain is intact and 1 when it is not.
+Exit status is 0 when the chain is intact and every check completed, 1 when the
+chain is damaged, and 2 when verification could not be completed: the directory
+is unreadable, or a key or a token needed for a check is not here. A scheduled
+job that treats 2 as an outage rather than as tampering will be right.
 
 Flags:
 `)
@@ -35,6 +39,11 @@ Flags:
 		dir    = fs.String("dir", "", "evidence directory to verify (required)")
 		asJSON = fs.Bool("json", false, "emit the result as JSON")
 		quiet  = fs.Bool("quiet", false, "print nothing; report the result through the exit status only")
+
+		requireAttestation = fs.Bool("require-attestation", false,
+			"fail when no checkpoint verifies; use it where the log is known to be signed, so removing the attestations is an error rather than a note")
+		expectHead = fs.String("expect-head", "",
+			"fail unless the chain head is this hash; compare against a head recorded somewhere the proxy cannot write to")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -49,6 +58,25 @@ Flags:
 		return err
 	}
 
+	// Both checks are the operator asserting something this directory cannot
+	// know about itself: that it was signed, and what its head was when they
+	// last looked. Neither can be inferred, which is why they are flags.
+	if *requireAttestation && !res.Attested {
+		res.Problems = append(res.Problems, evidence.Problem{
+			Segment: evidence.CheckpointsFile,
+			Kind:    evidence.ProblemAttestationsGone, Severity: evidence.SeverityHigh,
+			Detail: "--require-attestation was given and no checkpoint both verified against a key here and matched the chain, so this log carries no attestation it can be held to",
+		})
+	}
+	if *expectHead != "" && !strings.EqualFold(*expectHead, res.HeadHash) {
+		res.Problems = append(res.Problems, evidence.Problem{
+			Kind: evidence.ProblemCheckpointMismatch, Severity: evidence.SeverityHigh,
+			Detail: fmt.Sprintf(
+				"--expect-head was %s and this log heads at %s; if the expected value came from a place the proxy cannot write to, the log has been replaced",
+				*expectHead, res.HeadHash),
+		})
+	}
+
 	switch {
 	case *quiet:
 	case *asJSON:
@@ -61,17 +89,27 @@ Flags:
 		printVerify(res)
 	}
 
-	if !res.OK() {
+	switch {
+	case res.OK():
+	case !res.Intact():
 		os.Exit(1)
+	default:
+		// Every problem was of the "could not check" kind, so the chain is
+		// sound as far as it could be read. Saying 1 here would report
+		// tampering because somebody forwarded a bundle without a key.
+		os.Exit(2)
 	}
 	return nil
 }
 
 func printVerify(res *evidence.VerifyResult) {
-	if res.OK() {
+	switch {
+	case res.OK():
 		fmt.Printf("hash chain intact\n\n")
-	} else {
+	case !res.Intact():
 		fmt.Printf("HASH CHAIN VERIFICATION FAILED\n\n")
+	default:
+		fmt.Printf("hash chain intact, but verification could not be completed\n\n")
 	}
 
 	fmt.Printf("  directory   %s\n", res.Dir)
@@ -103,6 +141,12 @@ func printVerify(res *evidence.VerifyResult) {
 		fmt.Printf("              the authority's own signature is not checked here; VERIFY.md has the openssl command\n")
 	}
 	fmt.Printf("  checked in  %s\n", res.Duration)
+
+	// The notes carry the states the counters only hint at, and the most
+	// important of them says the log carries no attestation at all.
+	for _, n := range res.Notes {
+		fmt.Printf("\n  note: %s\n", n)
+	}
 
 	if len(res.Problems) == 0 {
 		return

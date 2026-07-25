@@ -163,6 +163,9 @@ const (
 	ProblemBadSignature       = "bad_signature"
 	ProblemUnknownKey         = "unknown_key"
 	ProblemBadTimestamp       = "bad_timestamp"
+	ProblemCheckpointGap      = "checkpoint_gap"
+	ProblemAttestationsGone   = "attestations_removed"
+	ProblemUnknownCheckpoint  = "unknown_checkpoint_version"
 )
 
 // Severities. High means the log cannot be relied on as it stands. Medium
@@ -214,6 +217,12 @@ type VerifyResult struct {
 	Timestamps             int `json:"timestamps,omitempty"`
 	TimestampedCheckpoints int `json:"timestamped_checkpoints,omitempty"`
 
+	// ChainedCheckpoints counts checkpoints that carry the linkage fields, so a
+	// reader can tell how much of the attestation history is protected against
+	// deletion rather than only against forgery. Checkpoints written before
+	// those fields existed are counted in Checkpoints and not here.
+	ChainedCheckpoints int `json:"chained_checkpoints,omitempty"`
+
 	// Notes carry findings that are not integrity failures, such as a log that
 	// verifies but that nothing attests to.
 	Notes []string `json:"notes,omitempty"`
@@ -224,6 +233,33 @@ type VerifyResult struct {
 
 // OK reports whether the chain verified without any problem.
 func (r *VerifyResult) OK() bool { return len(r.Problems) == 0 }
+
+// Intact reports whether the chain itself is sound: every record hashes to what
+// it carries, every link holds, no sequence number is missing, and nothing that
+// is signed contradicts it.
+//
+// This is deliberately narrower than OK. A problem that says "I could not check
+// this" is not a problem that says "this is broken", and collapsing the two
+// makes the tool print its maximum-severity claim over an intact log because a
+// public key was missing from the copy it was handed. A reader has to be able
+// to tell a damaged chain from an incomplete one.
+func (r *VerifyResult) Intact() bool {
+	for _, p := range r.Problems {
+		if !uncheckable[p.Kind] {
+			return false
+		}
+	}
+	return true
+}
+
+// uncheckable names the problems that mean verification could not be completed,
+// as opposed to completing and finding damage. Each is still reported and still
+// makes OK false; what they do not do is claim the chain is broken.
+var uncheckable = map[string]bool{
+	ProblemUnknownKey:        true,
+	ProblemUnknownCheckpoint: true,
+	ProblemBadTimestamp:      true,
+}
 
 // Verify walks every segment in dir and checks that each record's hash matches
 // its contents, that each record links to its predecessor, and that sequence
@@ -513,6 +549,20 @@ func loadCheckpointsForVerify(dir string, res *VerifyResult, keys *KeySet) *chec
 			// Nothing to check against; reported once in finish.
 			continue
 		}
+		// A checkpoint from a newer build is unreadable, not forged. Reporting
+		// it as a bad signature would accuse an operator of tampering for the
+		// ordinary act of upgrading, so it is named for what it is and the
+		// signature is not checked against a preimage this build cannot render.
+		if c.Version != CheckpointVersion {
+			res.Problems = append(res.Problems, Problem{
+				Segment: CheckpointsFile, Line: i + 1, Seq: c.Seq,
+				Kind: ProblemUnknownCheckpoint, Severity: SeverityMedium,
+				Detail: fmt.Sprintf(
+					"%s declares checkpoint version %d and this build understands version %d, so its signature was not checked; verify with a build that knows version %d",
+					checkpointLabel(c), c.Version, CheckpointVersion, c.Version),
+			})
+			continue
+		}
 		key, ok := keys.signerOf(c.KeyID)
 		if !ok {
 			res.Problems = append(res.Problems, Problem{
@@ -530,9 +580,78 @@ func loadCheckpointsForVerify(dir string, res *VerifyResult, keys *KeySet) *chec
 			})
 			continue
 		}
+		if c.Chained() {
+			if err := VerifyCheckpointChainSignature(key.Public, c); err != nil {
+				res.Problems = append(res.Problems, Problem{
+					Segment: CheckpointsFile, Line: i + 1, Seq: c.Seq,
+					Kind: ProblemBadSignature, Severity: SeverityHigh,
+					Detail: err.Error(),
+				})
+				continue
+			}
+		}
 		cs.signed[i] = true
 	}
+	cs.checkLinkage(res)
 	return cs
+}
+
+// checkLinkage walks the checkpoint chain and reports deletions.
+//
+// Signatures alone cannot do this. Every checkpoint an attacker leaves behind
+// verifies perfectly; what betrays the ones removed is that the survivors
+// commit to a position and to a predecessor. A gap in the index, or a link that
+// names a checkpoint that is not there, is a deletion and nothing else, so it
+// is reported at high severity next to the rewrite case it accompanies.
+func (cs *checkpointSet) checkLinkage(res *VerifyResult) {
+	var prev *Checkpoint
+	var prevIndex int
+	for i := range cs.all {
+		c := cs.all[i]
+		if !c.Chained() {
+			// Predates chaining. Nothing to check, and nothing it can prove.
+			prev, prevIndex = nil, 0
+			continue
+		}
+		res.ChainedCheckpoints++
+		if prev == nil {
+			// The first chained checkpoint numbers itself after everything
+			// already in the file. If it claims a higher position than there is
+			// room for, the checkpoints before it were deleted from the front,
+			// which the link walk below cannot see because the survivors are
+			// contiguous among themselves.
+			if c.Index > uint64(i) {
+				res.Problems = append(res.Problems, Problem{
+					Segment: CheckpointsFile, Line: i + 1, Seq: c.Seq,
+					Kind: ProblemCheckpointGap, Severity: SeverityHigh,
+					Detail: fmt.Sprintf(
+						"%s is numbered %d but only %d checkpoint(s) precede it in this file: %d attestation(s) were removed from the beginning",
+						checkpointLabel(c), c.Index, i, c.Index-uint64(i)),
+				})
+			}
+			prev, prevIndex = &cs.all[i], i
+			continue
+		}
+		if c.Index != prev.Index+1 {
+			missing := c.Index - prev.Index - 1
+			res.Problems = append(res.Problems, Problem{
+				Segment: CheckpointsFile, Line: i + 1, Seq: c.Seq,
+				Kind: ProblemCheckpointGap, Severity: SeverityHigh,
+				Detail: fmt.Sprintf(
+					"%s is numbered %d and the one before it is numbered %d: %d attestation(s) that were signed are no longer in this file",
+					checkpointLabel(c), c.Index, prev.Index, missing),
+			})
+		} else if want := CheckpointHash(*prev); c.PrevCheckpointHash != want {
+			res.Problems = append(res.Problems, Problem{
+				Segment: CheckpointsFile, Line: i + 1, Seq: c.Seq,
+				Kind: ProblemCheckpointGap, Severity: SeverityHigh,
+				Detail: fmt.Sprintf(
+					"%s links to a predecessor with hash %s, but the checkpoint on line %d hashes to %s: an attestation was replaced or removed",
+					checkpointLabel(c), short(c.PrevCheckpointHash), prevIndex+1, short(want)),
+			})
+		}
+		prev, prevIndex = &cs.all[i], i
+	}
 }
 
 // verifyTimestamps checks the RFC 3161 anchors against the checkpoints they
@@ -658,7 +777,14 @@ func (cs *checkpointSet) finish(res *VerifyResult, anchor *PruneAnchor) {
 	}
 
 	if len(cs.all) == 0 {
-		res.Notes = append(res.Notes, "no checkpoints found: the chain is internally consistent, but nothing signed attests to when it was written or by whom")
+		// Deliberately not a problem. A public key can sit in a directory whose
+		// log was written with signing off, so an empty checkpoint file cannot
+		// be told apart from a log that was never attested, and guessing would
+		// accuse honest operators. --require-attestation is how somebody who
+		// knows their log is signed turns this into a failure.
+		res.Notes = append(res.Notes,
+			"no checkpoints found: the chain is internally consistent, but nothing signed attests to when it was written or by whom. "+
+				"If this log was written with signing on, the attestations have been removed; run with --require-attestation where that is known.")
 		return
 	}
 	if res.KeyID == "" {

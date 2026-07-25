@@ -3,6 +3,7 @@ package evidence
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,10 +23,32 @@ const CheckpointVersion = 1
 // signatures, so neither can be replayed as the other.
 const checkpointDomain = "flugschreiber-checkpoint-v1"
 
+// checkpointChainDomain separates the signature that binds a checkpoint to its
+// predecessor from the one that covers the checkpoint's own claims.
+const checkpointChainDomain = "flugschreiber-checkpoint-chain-v1"
+
+// GenesisCheckpointHash is the prev_checkpoint_hash of the first checkpoint in
+// a directory, mirroring GenesisHash in the record chain.
+const GenesisCheckpointHash = "0000000000000000000000000000000000000000000000000000000000000000"
+
 // Checkpoint attests that at one moment the chain head was a given hash. The
 // chain alone proves that a log is internally consistent; a checkpoint is what
 // makes rewriting the whole log from the beginning detectable, because the
 // attacker would also have to produce a signature.
+//
+// The last three fields chain the checkpoints to each other. Without them a
+// signature says only "this head existed", which an attacker defeats by
+// deleting the attestations rather than forging them: every remaining
+// checkpoint still verifies, and nothing reveals the ones that went. Index and
+// PrevCheckpointHash make a deletion visible, and ChainSignature is what stops
+// an attacker simply renumbering what is left.
+//
+// They are carried outside the v1 signature on purpose. Signature still covers
+// exactly the bytes CheckpointPreimage rendered before they existed, so a
+// verifier built against schema version 1 validates it unchanged and ignores
+// the rest. Folding them into that preimage would have made every checkpoint
+// this version writes read as a forgery to every verifier already deployed,
+// which is the one failure a tamper-evidence tool must never manufacture.
 type Checkpoint struct {
 	Version    int    `json:"version"`
 	Segment    string `json:"segment"`
@@ -35,6 +58,96 @@ type Checkpoint struct {
 	Timestamp  string `json:"timestamp"`
 	KeyID      string `json:"key_id"`
 	Signature  string `json:"signature"`
+
+	// Index counts checkpoints in this directory from zero. A gap in it is a
+	// deletion.
+	Index uint64 `json:"index"`
+
+	// PrevCheckpointHash is CheckpointHash of the checkpoint before this one,
+	// or GenesisCheckpointHash for the first.
+	PrevCheckpointHash string `json:"prev_checkpoint_hash,omitempty"`
+
+	// ChainSignature covers Index and PrevCheckpointHash together with this
+	// checkpoint's own identity. Empty on checkpoints written before this
+	// version, which verify under the v1 rule alone.
+	ChainSignature string `json:"chain_signature,omitempty"`
+}
+
+// Chained reports whether this checkpoint carries the linkage fields. A
+// directory written by an earlier version has none, and its checkpoints are
+// still valid attestations of the heads they name.
+func (c Checkpoint) Chained() bool { return c.ChainSignature != "" }
+
+// CheckpointHash identifies one checkpoint for the purpose of linking the next
+// one to it. It covers the signed claims and the signature over them, so a
+// successor commits to both what its predecessor said and who said it.
+//
+// It is computed from the preimage rather than from the JSON line, for the same
+// reason the record chain hashes the event as bytes: a reader must not have to
+// reproduce a particular serialisation to check a link.
+func CheckpointHash(c Checkpoint) string {
+	var b bytes.Buffer
+	b.Write(CheckpointPreimage(c))
+	b.WriteString("signature:")
+	b.WriteString(c.Signature)
+	b.WriteString("\n")
+	sum := sha256.Sum256(b.Bytes())
+	return hex.EncodeToString(sum[:])
+}
+
+// CheckpointChainPreimage renders the bytes ChainSignature covers.
+func CheckpointChainPreimage(c Checkpoint) []byte {
+	var b bytes.Buffer
+	b.WriteString(checkpointChainDomain)
+	b.WriteString("\ncheckpoint:")
+	b.WriteString(CheckpointHash(c))
+	b.WriteString("\nindex:")
+	b.WriteString(strconv.FormatUint(c.Index, 10))
+	b.WriteString("\nprev_checkpoint_hash:")
+	b.WriteString(c.PrevCheckpointHash)
+	b.WriteString("\n")
+	return b.Bytes()
+}
+
+// SignCheckpointChain adds the linkage signature, after the checkpoint's own
+// signature is already in place. Index and PrevCheckpointHash must be set.
+func SignCheckpointChain(s Signer, c *Checkpoint) error {
+	if s == nil {
+		return errors.New("evidence: sign checkpoint chain: no signer")
+	}
+	if c.Signature == "" {
+		return fmt.Errorf("evidence: sign checkpoint chain at seq %d: the checkpoint is not signed yet", c.Seq)
+	}
+	if c.PrevCheckpointHash == "" {
+		return fmt.Errorf("evidence: sign checkpoint chain at seq %d: no predecessor hash", c.Seq)
+	}
+	preimage := CheckpointChainPreimage(*c)
+	sig, err := s.Sign(preimage)
+	if err != nil {
+		return fmt.Errorf("evidence: sign checkpoint chain at seq %d: %w", c.Seq, err)
+	}
+	if len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("evidence: sign checkpoint chain at seq %d: signature is %d bytes, expected %d", c.Seq, len(sig), ed25519.SignatureSize)
+	}
+	c.ChainSignature = hex.EncodeToString(sig)
+	return nil
+}
+
+// VerifyCheckpointChainSignature checks the linkage signature against pub.
+func VerifyCheckpointChainSignature(pub ed25519.PublicKey, c Checkpoint) error {
+	if len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("evidence: verify checkpoint chain: public key is %d bytes, expected %d", len(pub), ed25519.PublicKeySize)
+	}
+	sig, err := hex.DecodeString(c.ChainSignature)
+	if err != nil {
+		return fmt.Errorf("evidence: checkpoint at seq %d has a chain signature that is not hex: %w", c.Seq, err)
+	}
+	if !ed25519.Verify(pub, CheckpointChainPreimage(c), sig) {
+		return fmt.Errorf(
+			"evidence: the chain signature on the checkpoint at seq %d does not verify against key %s, so its position in the sequence is not attested",
+			c.Seq, KeyID(pub))
+	}
+	return nil
 }
 
 // CheckpointPreimage renders the exact bytes a checkpoint signature covers.
@@ -150,6 +263,7 @@ func (c Checkpoint) checkFieldSeparators() error {
 		{"record_hash", c.RecordHash},
 		{"timestamp", c.Timestamp},
 		{"key_id", c.KeyID},
+		{"prev_checkpoint_hash", c.PrevCheckpointHash},
 	} {
 		if strings.ContainsAny(f.value, "\n\r") {
 			return fmt.Errorf("evidence: checkpoint at seq %d has a %s containing a line break, which would make its signature cover ambiguous bytes", c.Seq, f.name)
@@ -188,6 +302,37 @@ func AppendCheckpoint(dir string, c Checkpoint) error {
 	// make the directory entry that names it durable. Without this, a machine
 	// crash can leave a log whose checkpoints.jsonl was written and lost.
 	syncDir(dir)
+	return nil
+}
+
+// recoverCheckpointChain reads where the checkpoint chain left off, so that a
+// restart continues it instead of starting a second one.
+//
+// A directory whose checkpoints predate the chain fields starts the chain at
+// the current end: those checkpoints are still valid attestations, they simply
+// carry no linkage, and refusing to run against them would strand every log
+// written by an earlier version. What follows is chained, so a deletion after
+// the upgrade is detectable even though one before it is not.
+func (s *Store) recoverCheckpointChain() error {
+	checks, err := ReadCheckpoints(s.opts.Dir)
+	if err != nil {
+		return err
+	}
+	if len(checks) == 0 {
+		s.checkpointIndex = 0
+		s.prevCheckpointHash = GenesisCheckpointHash
+		return nil
+	}
+	last := checks[len(checks)-1]
+	s.prevCheckpointHash = CheckpointHash(last)
+	if last.Chained() {
+		s.checkpointIndex = last.Index + 1
+		return nil
+	}
+	// Unchained history: number the first chained checkpoint after the ones
+	// already on disk, so the index still counts every checkpoint in the file
+	// and a later reader can tell where chaining began.
+	s.checkpointIndex = uint64(len(checks))
 	return nil
 }
 

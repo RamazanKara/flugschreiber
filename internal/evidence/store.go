@@ -130,6 +130,13 @@ type Store struct {
 	// with identical attestations.
 	checkpointSeq uint64
 
+	// checkpointIndex and prevCheckpointHash continue the checkpoint chain
+	// across restarts. They are recovered from the file at Open, so a deletion
+	// that happened while the process was down shows up as a gap rather than
+	// being papered over by starting again from zero.
+	checkpointIndex    uint64
+	prevCheckpointHash string
+
 	appended    atomic.Uint64
 	checkpoints atomic.Uint64
 	writeErr    atomic.Pointer[error]
@@ -229,6 +236,10 @@ func Open(opts Options) (*Store, error) {
 	// A restart with no traffic should not append a checkpoint that says
 	// nothing the previous one did not.
 	s.checkpointSeq = seq
+
+	if err := s.recoverCheckpointChain(); err != nil {
+		return nil, err
+	}
 
 	if len(segs) > 0 {
 		last := segs[len(segs)-1]
@@ -474,14 +485,25 @@ func (s *Store) appendCheckpoint(segment string) error {
 		// checkpoint comparable across a later prune.
 		Records:   s.seq,
 		Timestamp: s.opts.Now().UTC().Format(time.RFC3339Nano),
+
+		Index:              s.checkpointIndex,
+		PrevCheckpointHash: s.prevCheckpointHash,
 	}
 	if err := SignCheckpointWith(s.signer, &c); err != nil {
+		return err
+	}
+	// The linkage signature is added after the checkpoint's own, because it
+	// covers that signature: a successor commits to who attested to its
+	// predecessor and not only to what was attested.
+	if err := SignCheckpointChain(s.signer, &c); err != nil {
 		return err
 	}
 	if err := AppendCheckpoint(s.opts.Dir, c); err != nil {
 		return err
 	}
 	s.checkpointSeq = s.seq
+	s.checkpointIndex++
+	s.prevCheckpointHash = CheckpointHash(c)
 	s.checkpoints.Add(1)
 	s.maybeTimestamp(c)
 	return nil
