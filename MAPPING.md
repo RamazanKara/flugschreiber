@@ -21,7 +21,10 @@ compatibility policy.
 | --- | --- | --- |
 | `timestamp` | RFC3339 (nanosecond) time the record was written | The proxy's clock. If the host clock is wrong or moves, the timestamp is wrong. `seq` is the reliable ordering. |
 | `seq` | Monotonic sequence number across the whole log | Ordering is by write completion, not by request arrival. Two concurrent requests are ordered by which finished first. |
-| `event_type` | `inference`, `tool_call`, `tool_result`, `human_intervention`, `session_start`, `session_end`, `config_change`, `system_event` | The proxy writes `inference`; the authenticated events endpoint records the human and lifecycle types. `tool_result` has no writer yet and is reserved. |
+| `event_type` | `inference`, `tool_call`, `tool_result`, `human_intervention`, `incident`, `session_start`, `session_end`, `config_change`, `system_event` | The proxy writes `inference`, and writes `config_change` and `system_event` about itself when a key is rotated, content is erased or a torn record is repaired. The authenticated events endpoint records the human types. `tool_result` as a standalone event has no writer; tool results are recorded on the inference event instead, see `tool_results` below. |
+| `stream` | Whether the response was streamed | Set from the request and confirmed from the response content type. |
+| `upstream_response_id` | The id the upstream gave the response | Self-reported by the upstream. |
+| `upstream_previous_id` | The Responses API's `previous_response_id` | How a multi-turn conversation is stitched together when the turns are separate HTTP requests. Only present when the caller sent it. |
 | `request_id` | Unique per interaction, also returned to the caller as `X-Flugschreiber-Request-Id` | The link between an evidence record and anything your application logged about the same request. |
 | `session_id` | Groups related interactions | Only populated when the caller sends `X-Flugschreiber-Session`. The proxy cannot infer a session it is not told about. |
 | `schema_version` | Schema version of the record | |
@@ -85,11 +88,29 @@ head somewhere the proxy cannot reach. `SECURITY.md` has the rest.
 | `usage` | Token accounting as reported by the upstream | Absent when the upstream does not report it, which is common for streaming without `stream_options.include_usage`. |
 | `tool_calls` | Function calls the model requested, with name and index | The *request* to call a tool. Whether it was executed, and what it returned, happens in your application. |
 | `finish_reasons` | Why generation stopped | `length` here is often the more interesting signal: it means output was cut off. |
+| `tool_results` | What your application sent back after a tool call: the call id, a digest and a byte count, plus the text in `store` mode | Recorded on the following inference event, because that is the request that carries them. In `store` mode this holds tool output verbatim, which is frequently the most sensitive content in the log: a tool that reads a database returns rows. With content encryption on, tool text is **discarded rather than sealed**, because schema version 1 gives it no ciphertext field; the digest stays. |
+| `decision`, `note`, `actor` | What a human decided, in their words, and who they were | Free text, written by whoever holds the events token. Not verified. |
 
 Where this runs out: Article 26 also covers human oversight, input data
 relevance, and informing affected persons. Flugschreiber records the
 `human_intervention` event type once you send interventions to its events endpoint, but it
 cannot design or perform oversight.
+
+### The content tree
+
+`content` holds the prompts and completions themselves, and is the part of the
+record a data protection assessment is actually about.
+
+| Field | What it records | Caveat |
+| --- | --- | --- |
+| `content.mode` | The fidelity in force when the record was written: `hash`, `redact` or `store` | Recorded per record, so a mode change is visible in the log rather than having to be remembered. |
+| `content.input`, `content.output` | The request and response payloads | Input is what the caller sent, output is what the upstream returned. For a streamed response the digest covers the raw SSE bytes and the text is the reassembled message. |
+| `.sha256`, `.bytes` | Digest and length of the exact wire bytes, in **every** mode including `hash` | This is what lets a transcript held elsewhere be proven to be the transcript of this interaction. After an erasure it remains as a claim that can no longer be re-proven. |
+| `.text`, `.messages` | The content itself, in `store` and `redact` modes only | This is personal data if your prompts contain any. `hash` mode, the default, has neither. |
+| `.redactions` | What the redactor replaced and how many times | Pattern-based redaction is best-effort. Free text carries personal data in shapes no regular expression matches. |
+| `.truncated` | The stored text is a prefix of what crossed the wire | Set at the 8 MiB wire cap and the 256 KiB stored-text cap. The digest still covers the whole. |
+| `.ciphertext` | The sealed form of the text, when content encryption is on | The digest is unchanged and still covers the plaintext wire bytes, so an encrypted record proves what an unencrypted one proves. |
+| `content.encryption` | The algorithm and the key id the record is sealed under, and whether that key has been erased | `erased` and `erased_at` are filled in at read time from the keystore, not stored on the record: the chain hashes each record as written and an erasure must not go back and stamp it. A reader without the keystore sees content it cannot open, which is a different fact from content that was erased, and the tools say which. |
 
 ## Article 50: transparency
 
@@ -146,6 +167,12 @@ Worth stating plainly, because the gaps matter more than the coverage:
   whether the upstream is serving the model it claims to.
 - **Whether the output was correct**, useful, harmful, or acted upon.
 - **Retrieval context**, unless it was injected into the prompt the proxy saw.
+- **Requests it forwards but does not classify.** Anything that is not a POST to
+  a recognised endpoint is proxied through and not recorded. That includes
+  vLLM's `/score`, `/classify` and `/pooling`, `/v1/audio/transcriptions`, and
+  Ollama's native `/api/chat` and `/api/generate`. They reach the model server
+  and leave no trace in the log, no metric and no line in `coverage`. If your
+  applications use them, the log understates what the system did.
 - **Traffic that does not pass through it.** Coverage is a deployment property.
   `flugschreiber coverage` reports what share of observed traffic was
   captured and in which mode, but it cannot report on traffic that bypassed the

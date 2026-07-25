@@ -111,6 +111,12 @@ type Config struct {
 	// store and redact modes; hash mode retains no text to encrypt.
 	ContentEncryption bool `json:"content_encryption,omitempty"`
 
+	// ContentKeystore puts the content keys somewhere other than the evidence
+	// directory. That directory is the one operators are told to snapshot and
+	// to put on object-lock storage, and a key inside a snapshot survives the
+	// erasure that was supposed to destroy it. Empty means beside the evidence.
+	ContentKeystore string `json:"content_keystore,omitempty"`
+
 	// Archive ships sealed segments to a second location. It is archival and
 	// never the write path: object stores cannot append, so the local segment
 	// is always primary and only a rotated, closed segment is uploaded.
@@ -349,6 +355,13 @@ func (c *Config) ApplyEnv() error {
 			return fmt.Errorf("config: %sRETENTION_MAX_BYTES: %w", EnvPrefix, err)
 		}
 		c.RetentionMaxBytes = n
+	}
+	if v, ok := os.LookupEnv(EnvPrefix + "CHECKPOINT_INTERVAL"); ok {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: %sCHECKPOINT_INTERVAL: %w", EnvPrefix, err)
+		}
+		c.CheckpointInterval = Duration(d)
 	}
 	if v, ok := os.LookupEnv(EnvPrefix + "TSA_INTERVAL"); ok {
 		d, err := time.ParseDuration(v)

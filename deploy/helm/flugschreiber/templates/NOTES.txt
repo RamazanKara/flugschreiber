@@ -43,14 +43,23 @@ Flugschreiber {{ .Chart.AppVersion }} is recording to {{ .Values.config.dataDir 
          --organisation {{ .Values.config.deployment.organisation | default "Muster GmbH" | quote }} \
          --system-name {{ .Values.config.deployment.systemName | default "Support Assistant" | quote }}
 
-  4. Hand an auditor a copy of the directory and the binary. They can run the
-     same verification on their own machine, with no access to your cluster:
+  4. Hand an auditor a bundle. Build it in the pod and stream it out; the image
+     is distroless, so kubectl cp does not work against it (it runs tar inside
+     the container, and there is no tar, no shell and no cat).
 
-       kubectl cp {{ .Release.Namespace }}/$(kubectl get pod -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=proxy -o name | head -1 | cut -d/ -f2):{{ .Values.config.dataDir }} ./evidence-copy
-       flugschreiber verify --dir ./evidence-copy
+       POD=$(kubectl get pod -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=proxy -o name | head -1 | cut -d/ -f2)
+       kubectl exec -n {{ .Release.Namespace }} $POD -- \
+         flugschreiber export --dir {{ .Values.config.dataDir }} --out /tmp/evidence.tar.gz
+       kubectl exec -n {{ .Release.Namespace }} $POD -- \
+         flugschreiber export --dir {{ .Values.config.dataDir }} --out /dev/stdout > evidence.tar.gz
 
-     client-salt stays in the pod. Without it a recipient can tell two callers
-     apart but cannot map an identifier back to a credential.
+     The bundle carries the segments, the checkpoints, the anchors and every
+     public key, plus a VERIFY.md that specifies the hash construction so a
+     recipient can check it without running software you supplied.
+
+     It never carries client-salt, the signing key or the content keystore.
+     Without the salt a recipient can tell two callers apart but cannot map an
+     identifier back to a credential.
 
 {{- if not .Values.modelServer.networkPolicy.enabled }}
 

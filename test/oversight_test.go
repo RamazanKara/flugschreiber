@@ -126,7 +126,7 @@ func TestOversightAndExportEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("export failed: %v\n%s", err, out)
 		}
-		if !strings.Contains(out, "no signing key and no client salt") {
+		if !strings.Contains(out, "no signing key, no client salt and no content keys") {
 			t.Errorf("export does not state what it withheld:\n%s", out)
 		}
 

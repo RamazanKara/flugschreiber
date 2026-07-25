@@ -203,7 +203,17 @@ deliberately does not decide which authorities you should trust. An authority
 that is down costs anchors and never records.
 
 Rotating is `flugschreiber keys rotate`. It keeps every retired public key,
-because checkpoints signed before a rotation are still evidence.
+because checkpoints signed before a rotation are still evidence. With an
+external signer the rotation happens at the helper, so run
+`flugschreiber keys retire --key <old public key>` before you repoint
+`--signer-public-key`, or the checkpoints that key already signed become
+unverifiable.
+
+Checkpoints are chained to each other, so removing one is detectable rather than
+silent. Deleting the file entirely cannot be told from a log that was never
+signed, which is what `verify --require-attestation` is for on a log you know is
+signed, alongside `--expect-head` against a hash you recorded somewhere the
+proxy cannot write to.
 
 ## What it does not do
 
@@ -308,6 +318,9 @@ Flags beat environment variables, which beat the config file. Everything has a
 | `--tsa-url` | `FLUGSCHREIBER_TSA_URL` | | RFC 3161 timestamping authority to anchor checkpoints to |
 | `--tsa-interval` | `FLUGSCHREIBER_TSA_INTERVAL` | `1h` | How often to anchor; an authority is somebody else's rate-limited service |
 | `--retention-max-bytes` | `FLUGSCHREIBER_RETENTION_MAX_BYTES` | | Size cap on the evidence directory. It reports; it never deletes below the retention floor |
+| `--content-encryption` | `FLUGSCHREIBER_CONTENT_ENCRYPTION` | `false` | Encrypt stored content, so an erasure can destroy a key rather than the chain |
+| `--content-keystore` | | beside the evidence | Where the content keys live. Put them off the snapshotted volume: a key inside a backup survives the erasure meant to destroy it |
+| `--force-writer-lock` | | `false` | Take the directory when another writer appears to hold it. Only for a holder on another host that is known to be stopped |
 | `--upstream-ca` | `FLUGSCHREIBER_UPSTREAM_CA_FILE` | | Extra roots trusted for the upstream connection |
 | `--organisation`, `--system-name`, `--purpose`, `--contact` | `FLUGSCHREIBER_ORGANISATION`, … | | Pre-fill the generated documentation |
 
@@ -351,6 +364,7 @@ critical path.
 - [docs/tamper-evident-llm-audit-logs-on-kubernetes.md](docs/tamper-evident-llm-audit-logs-on-kubernetes.md) is the Kubernetes guide
 - [MAPPING.md](MAPPING.md) maps every schema field to the provision it supports (Articles 12, 19, 26, 50, 73) and says where the support runs out
 - [docs/SCHEMA.md](docs/SCHEMA.md) is the log format and the compatibility policy
+- [docs/STABILITY.md](docs/STABILITY.md) is what the command line promises: which surfaces are frozen, and what the exit codes mean
 - [DECISIONS.md](DECISIONS.md) is why things are the way they are
 - [SECURITY.md](SECURITY.md) is the threat model, including what it does not defend against
 - [CONTRIBUTING.md](CONTRIBUTING.md)
@@ -407,6 +421,7 @@ script, re-render, commit.
 | `keys` | Show or rotate the checkpoint signing key, keeping every retired public key |
 | `archive-verify` | Check that the offsite archive holds every sealed segment |
 | `erase` | Destroy the stored content of a session, leaving the chain intact |
+| `repair` | Finish a write a power loss interrupted, so the server can start again |
 
 Three are worth calling out.
 

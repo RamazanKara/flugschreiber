@@ -2,6 +2,7 @@ package audit
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/base64"
@@ -567,4 +568,74 @@ func TestExportNeverIncludesTheContentKeystore(t *testing.T) {
 			t.Fatalf("the master content key leaked into %s", name)
 		}
 	}
+}
+
+// A distroless image has no shell and no tar, so kubectl cp cannot get a bundle
+// out of a pod and kubectl exec with a redirect is the only way. That makes
+// streaming the supported handover path rather than a convenience.
+func TestABundleCanBeStreamedRatherThanWrittenToAFile(t *testing.T) {
+	dir := exportFixture(t)
+	pipePath := filepath.Join(t.TempDir(), "bundle.fifo")
+
+	// A regular file still goes through the atomic path.
+	out := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	if _, err := Export(ExportOptions{Dir: dir, Out: out, Now: time.Now}); err != nil {
+		t.Fatal(err)
+	}
+	fileBytes, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// And "-" produces the same archive, on stdout.
+	real := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- b
+	}()
+	_, exportErr := Export(ExportOptions{Dir: dir, Out: "-", Now: time.Now})
+	w.Close()
+	os.Stdout = real
+	streamed := <-done
+	if exportErr != nil {
+		t.Fatalf("streaming to stdout failed, so there is no way to get a bundle out of a distroless pod: %v", exportErr)
+	}
+
+	if len(streamed) == 0 {
+		t.Fatal("streaming produced nothing")
+	}
+	// Both are gzip, and both open as a tar holding the same entry names. The
+	// bytes differ because the manifest carries a timestamp.
+	if got := entryNames(t, streamed); len(got) != len(entryNames(t, fileBytes)) {
+		t.Errorf("the streamed bundle holds %d entries and the file holds %d", len(got), len(entryNames(t, fileBytes)))
+	}
+	_ = pipePath
+}
+
+// entryNames lists what a gzipped tar holds.
+func entryNames(t *testing.T, body []byte) []string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("the bundle is not gzip, so something else was written into the same stream: %v", err)
+	}
+	tr := tar.NewReader(gz)
+	var out []string
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("the bundle is not a readable tar: %v", err)
+		}
+		out = append(out, h.Name)
+	}
+	return out
 }

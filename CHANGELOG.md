@@ -4,6 +4,81 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
+## Unreleased
+
+Work towards 1.0, which is a promise of stability rather than a pile of
+features. An audit of what that promise would have to cover found fourteen
+things that would have broken it; these are them.
+
+### Evidence integrity
+
+- Checkpoints are chained: each carries an index, its predecessor's hash and a
+  signature over both, so deleting attestations is detectable. Every checkpoint
+  an attacker left behind used to verify, and nothing revealed the ones removed.
+  The linkage sits outside the v1 signature, so verifiers already deployed
+  validate these checkpoints unchanged instead of reporting them as forgeries.
+- `verify --require-attestation` fails when nothing attests to the log, and
+  `--expect-head` compares the head against a value recorded off-host.
+- Two servers on one evidence directory are refused. The single-writer rule was
+  enforced by the Helm chart and by nothing else; running two produced a chain
+  that failed from the first concurrent append and looked exactly like
+  tampering. A lock left by a dead process is still taken, because a crash must
+  not cost an outage.
+- `flugschreiber repair` finishes a write a power loss interrupted. A torn final
+  record used to stop the server permanently with no way out, so a proxy that
+  lost one record then recorded nothing at all. It refuses when a checkpoint
+  attests past the damage, because then the bytes were signed evidence.
+- Interactions still streaming at shutdown are recorded as truncated instead of
+  vanishing. One replica is the supported topology, so every image bump and node
+  drain passed through that window.
+- The client salt is no longer silently regenerated when the file is short,
+  which used to give every existing caller a new identity with nothing marking
+  the boundary.
+
+### Honesty
+
+- `verify` distinguishes a damaged chain from one it could not check. A missing
+  key exits 2 under a headline saying the chain is intact as far as it could be
+  read, where it used to print VERIFICATION FAILED and exit 1.
+- A checkpoint from a newer build is reported as unreadable rather than as a bad
+  signature, which read as forgery for the ordinary act of upgrading.
+- `inspect` shows truncation, incident severity, and the oversight attached to a
+  session by request id. All three were recorded and none were displayed.
+- A request over the parse cap keeps `model_requested`, which the router had
+  already read from the same bytes.
+- docs/SCHEMA.md states that the event digest covers the literal byte span in
+  the file. A reimplementation that parsed and re-serialised computed a
+  different digest and reported tampering on any prompt containing HTML, code or
+  an ampersand.
+- MAPPING.md documents the content tree, tool results and the lifecycle events,
+  and a test now fails when a schema field has no entry there.
+
+### Custody and operations
+
+- The content keystore appends rather than rewriting, so minting a key costs the
+  same at ten keys and at ten thousand. It is stated as internal to this
+  implementation and outside the format promise.
+- The signing helper no longer receives `AWS_ACCESS_KEY_ID` and its siblings,
+  which SECURITY.md already claimed. A helper that needs one can be given it by
+  name.
+- `keys retire` files a public key so an external-signer rotation cannot strand
+  the checkpoints it already signed.
+- `serve --content-keystore` puts the content keys off the snapshotted volume,
+  because a key inside a backup survives the erasure meant to destroy it.
+- The chart mounts a scratch volume, so `export` works inside the pod, and the
+  handover instructions no longer tell operators to run `kubectl cp` against a
+  distroless image that has no tar. A bundle can be streamed to stdout.
+- An evidence bundle's VERIFY.md specifies both preimages, so a recipient can
+  check it without running software supplied by the party under audit.
+
+### Documentation
+
+- docs/STABILITY.md says what the command line promises: which surfaces are
+  frozen, what the exit codes mean, and that boolean flags are one-way.
+- testdata/conformance holds frozen evidence with its expected hashes, so a
+  change that stops this build reading what an earlier one wrote fails the
+  suite.
+
 ## v0.4.0, 2026-07-24
 
 The three milestones below were planned as separate releases and built and
@@ -38,7 +113,8 @@ say what each part is for.
   evidence. `--signer-public-key` names the key the helper is supposed to hold,
   and a signature that does not verify against it is refused at startup.
   The helper is handed no `FLUGSCHREIBER_*` variable, so it never sees the
-  upstream key, the events token or the archive credentials.
+  upstream key or the events token. (It did receive the archive credentials,
+  which arrive under the standard AWS names; corrected in the release above.)
 - `--tsa-url` anchors checkpoints to an RFC 3161 timestamping authority, which
   turns their time from this host's claim into a third party's. Tokens are
   stored verbatim in `timestamps.jsonl`, checked against the checkpoint they

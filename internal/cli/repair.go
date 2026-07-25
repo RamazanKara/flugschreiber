@@ -144,7 +144,9 @@ func recordRepair(dir string, torn *evidence.TornRecord, actor string) (uint64, 
 		Note:      note,
 	}
 	if err := store.Append(ev); err != nil {
-		store.Close()
+		// The append failed, so the close error is the lesser of two and the
+		// caller needs the one that says the repair went unrecorded.
+		_ = store.Close()
 		return 0, err
 	}
 	if err := store.Close(); err != nil {

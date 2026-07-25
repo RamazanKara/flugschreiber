@@ -83,6 +83,8 @@ Every flag can also be set as an environment variable, for example
 			"take the evidence directory even when another writer appears to hold it; only for a holder on another host that is known to be stopped")
 		contentEncryption = fs.Bool("content-encryption", false,
 			"encrypt stored content at rest, so an erasure request can destroy a key rather than the chain")
+		contentKeystore = fs.String("content-keystore", "",
+			"where the content keys live (default beside the evidence); put them off the snapshotted volume, because a key inside a backup survives the erasure meant to destroy it")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -123,6 +125,7 @@ Every flag can also be set as an environment variable, for example
 	if *contentEncryption {
 		cfg.ContentEncryption = true
 	}
+	setString(&cfg.ContentKeystore, *contentKeystore)
 	if *upstreamSkipVerify {
 		cfg.UpstreamTLSSkipVerify = true
 	}

@@ -39,12 +39,17 @@ var secretFiles = map[string]bool{
 // BundleManifest describes an evidence export so a recipient can tell whether
 // what they received is what was sent.
 type BundleManifest struct {
-	Version    int          `json:"version"`
-	Tool       string       `json:"tool"`
-	ExportedAt string       `json:"exported_at"`
-	SourceDir  string       `json:"source_directory"`
-	Files      []BundleFile `json:"files"`
-	TotalBytes int64        `json:"total_bytes"`
+	Version int    `json:"version"`
+	Tool    string `json:"tool"`
+
+	// ToolVersion is the release that wrote the bundle. A recipient checking
+	// this in 2031 needs to know which specification to read, and a manifest
+	// that names only the tool leaves them guessing.
+	ToolVersion string       `json:"tool_version"`
+	ExportedAt  string       `json:"exported_at"`
+	SourceDir   string       `json:"source_directory"`
+	Files       []BundleFile `json:"files"`
+	TotalBytes  int64        `json:"total_bytes"`
 
 	Records       uint64             `json:"records"`
 	FirstSeq      uint64             `json:"first_seq"`
@@ -87,6 +92,48 @@ func countSealed(dir string) int {
 	return n
 }
 
+// openStream returns a writer when the destination is a stream rather than a
+// file to be replaced, and nil when it is an ordinary path.
+//
+// "-" is the conventional spelling. Anything that already exists and is not a
+// regular file is the same case: a pipe, a device, /dev/stdout. Writing a temp
+// file beside those and renaming over them would fail, and used to.
+func openStream(out string) (io.WriteCloser, error) {
+	if out == "-" {
+		return nopCloser{os.Stdout}, nil
+	}
+	// The rule is deliberately mechanical rather than clever, because an
+	// operator has to be able to predict which behaviour they get. /dev/stdout
+	// is a symlink to /proc/self/fd/1, so a redirect to a file makes Stat
+	// report a regular file and the atomic path then tried to create a
+	// temporary beside it, in /dev, and failed.
+	if out == os.DevNull || strings.HasPrefix(filepath.ToSlash(out), "/dev/") {
+		f, err := os.OpenFile(out, os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("export: open %s: %w", out, err)
+		}
+		return f, nil
+	}
+	// A pipe, a socket or a device cannot be replaced by a rename, and nothing
+	// is at risk of being destroyed by writing to one. Anything else, including
+	// a path that does not exist yet or cannot be stat'ed, is an ordinary file
+	// to create; a real problem with it surfaces when the bundle is written.
+	const streamModes = os.ModeNamedPipe | os.ModeSocket | os.ModeCharDevice
+	if info, err := os.Lstat(out); err == nil && info.Mode()&streamModes != 0 {
+		f, openErr := os.OpenFile(out, os.O_WRONLY, 0o600)
+		if openErr != nil {
+			return nil, fmt.Errorf("export: open %s: %w", out, openErr)
+		}
+		return f, nil
+	}
+	return nil, nil
+}
+
+// nopCloser keeps stdout open after the bundle is written.
+type nopCloser struct{ io.Writer }
+
+func (nopCloser) Close() error { return nil }
+
 // BundleFile is one file in the bundle with the digest of its contents.
 type BundleFile struct {
 	Name   string `json:"name"`
@@ -100,6 +147,12 @@ type ExportOptions struct {
 	Out  string
 	Now  func() time.Time
 	Note string
+
+	// ToolVersion is stamped into the manifest so a recipient knows which
+	// specification the bundle was written against. It is passed in rather than
+	// read here, because this package has no business knowing about build
+	// identity and the architecture is easier to keep that way.
+	ToolVersion string
 }
 
 // ExportResult reports what was written.
@@ -142,6 +195,7 @@ func Export(opts ExportOptions) (*ExportResult, error) {
 	manifest := BundleManifest{
 		Version:       1,
 		Tool:          "flugschreiber",
+		ToolVersion:   opts.ToolVersion,
 		ExportedAt:    now().UTC().Format(time.RFC3339Nano),
 		SourceDir:     opts.Dir,
 		Records:       verified.Records,
@@ -153,6 +207,21 @@ func Export(opts ExportOptions) (*ExportResult, error) {
 		ChainVerified: verified.OK(),
 		Problems:      verified.Problems,
 		RetiredKeys:   verified.RetiredKeys,
+	}
+
+	// Streaming to stdout or to a pipe is how a bundle leaves a distroless
+	// container: the image has no shell and no tar, so kubectl cp cannot work
+	// and kubectl exec with a redirect is the only way out. The rename dance
+	// below is skipped in that case, because its whole purpose is to protect a
+	// file that is already at the destination and a stream has none.
+	if streamed, err := openStream(opts.Out); err != nil {
+		return nil, err
+	} else if streamed != nil {
+		defer streamed.Close()
+		if err := writeArchive(streamed, opts, files, &manifest, now); err != nil {
+			return nil, err
+		}
+		return &ExportResult{Path: opts.Out, Manifest: manifest}, nil
 	}
 
 	outDir := filepath.Dir(opts.Out)
@@ -177,61 +246,7 @@ func Export(opts ExportOptions) (*ExportResult, error) {
 		_ = os.Remove(tmpName)
 	}()
 
-	gz := gzip.NewWriter(out)
-	tw := tar.NewWriter(gz)
-
-	const root = "flugschreiber-evidence"
-
-	// A bundle name is a path inside a tar archive and stays slash separated on
-	// every platform, so it is built with path.Join while the file it is read
-	// from is built with filepath.Join.
-	for _, name := range files {
-		src := filepath.Join(opts.Dir, filepath.FromSlash(name))
-		info, err := os.Stat(src)
-		if err != nil {
-			return nil, err
-		}
-		digest, err := fileDigest(src)
-		if err != nil {
-			return nil, err
-		}
-		if err := writeFileEntry(tw, path.Join(root, name), src, info); err != nil {
-			return nil, err
-		}
-		manifest.Files = append(manifest.Files, BundleFile{
-			Name: name, Bytes: info.Size(), SHA256: digest,
-		})
-		manifest.TotalBytes += info.Size()
-		if name == evidence.CheckpointsFile {
-			manifest.Checkpoints = countLines(src)
-		}
-		if name == evidence.TimestampsFile {
-			manifest.Timestamps = countLines(src)
-		}
-		if name == evidence.PruneAnchorFile {
-			manifest.Pruned = true
-		}
-	}
-	manifest.SealedRecords = countSealed(opts.Dir)
-
-	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	manifestJSON = append(manifestJSON, '\n')
-	if err := writeBytesEntry(tw, path.Join(root, "MANIFEST.json"), manifestJSON, now()); err != nil {
-		return nil, err
-	}
-
-	instructions := []byte(verifyInstructions(manifest, opts.Note))
-	if err := writeBytesEntry(tw, path.Join(root, "VERIFY.md"), instructions, now()); err != nil {
-		return nil, err
-	}
-
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	if err := gz.Close(); err != nil {
+	if err := writeArchive(out, opts, files, &manifest, now); err != nil {
 		return nil, err
 	}
 	if err := out.Sync(); err != nil {
@@ -451,7 +466,49 @@ func verifyInstructions(m BundleManifest, note string) string {
 	b.WriteString("| `MANIFEST.json` | Every file with its SHA-256, and the state of the chain when it was exported |\n\n")
 
 	b.WriteString("## Checking it\n\n")
-	b.WriteString("Download the Flugschreiber binary and run:\n\n")
+	b.WriteString("You do not need the tool that produced this, and an auditor should not\n")
+	b.WriteString("want it: software supplied by the party under audit is not what you\n")
+	b.WriteString("validate their evidence with. The construction is specified below and is\n")
+	b.WriteString("reimplementable in an afternoon in any language with SHA-256 and Ed25519.\n\n")
+	b.WriteString("### The record chain\n\n")
+	b.WriteString("Each line of a `seg-*.jsonl` file is one record. For each, in order:\n\n")
+	b.WriteString("```\n")
+	b.WriteString("preimage = \"flugschreiber-record-v1\\n\"\n")
+	b.WriteString("         + \"seq:\"   + decimal(seq)             + \"\\n\"\n")
+	b.WriteString("         + \"ts:\"    + timestamp                + \"\\n\"\n")
+	b.WriteString("         + \"prev:\"  + prev_hash                + \"\\n\"\n")
+	b.WriteString("         + \"event:\" + hex(sha256(event_bytes)) + \"\\n\"\n")
+	b.WriteString("\n")
+	b.WriteString("record_hash == hex(sha256(preimage))\n")
+	b.WriteString("```\n\n")
+	b.WriteString("`event_bytes` is the exact byte span the `event` member occupies in the\n")
+	b.WriteString("line, taken from the file as it is. Do not parse it and print it again:\n")
+	b.WriteString("the writer escapes `<`, `>` and `&` as `\\u003c` and friends, so a reader\n")
+	b.WriteString("that re-serialises computes a different digest and will report tampering\n")
+	b.WriteString("on ordinary traffic. Go has `json.RawMessage`, Rust's serde has\n")
+	b.WriteString("`&RawValue`, and a byte scan for the member with a brace-matching walk is\n")
+	b.WriteString("a dozen lines and exact.\n\n")
+	b.WriteString("`prev_hash` of the first record is 64 zeros unless `pruned.json` is here,\n")
+	b.WriteString("in which case it is the hash that file records. Every later record's\n")
+	b.WriteString("`prev_hash` is its predecessor's `record_hash`, and `seq` is contiguous.\n\n")
+	b.WriteString("### The checkpoint signatures\n\n")
+	b.WriteString("Each line of `checkpoints.jsonl` is signed with Ed25519 over:\n\n")
+	b.WriteString("```\n")
+	b.WriteString("\"flugschreiber-checkpoint-v1\\n\"\n")
+	b.WriteString("+ \"version:\"     + decimal(version)     + \"\\n\"\n")
+	b.WriteString("+ \"segment:\"     + segment              + \"\\n\"\n")
+	b.WriteString("+ \"seq:\"         + decimal(seq)         + \"\\n\"\n")
+	b.WriteString("+ \"record_hash:\" + record_hash          + \"\\n\"\n")
+	b.WriteString("+ \"records:\"     + decimal(records)     + \"\\n\"\n")
+	b.WriteString("+ \"timestamp:\"   + timestamp            + \"\\n\"\n")
+	b.WriteString("+ \"key_id:\"      + key_id               + \"\\n\"\n")
+	b.WriteString("```\n\n")
+	b.WriteString("The signature is hex in `signature`, the key is the PKIX file named by\n")
+	b.WriteString("`key_id`, and `record_hash` must equal the hash of the record at that\n")
+	b.WriteString("`seq`. A checkpoint that verifies but names a hash the log does not hold\n")
+	b.WriteString("is the signature of a rewrite and matters more than one that fails.\n\n")
+	b.WriteString("If you would rather use the tool, it is Apache-2.0 at\n")
+	b.WriteString("https://github.com/RamazanKara/flugschreiber and reads only these files:\n\n")
 	b.WriteString("```\nflugschreiber verify --dir ./flugschreiber-evidence\n```\n\n")
 	b.WriteString("It reads only these files. It needs no server, no network and no access to\n")
 	b.WriteString("the system that produced the log. Exit status 0 means the chain is intact.\n\n")
@@ -483,6 +540,7 @@ func verifyInstructions(m BundleManifest, note string) string {
 	}
 
 	b.WriteString("## State at export\n\n")
+	fmt.Fprintf(&b, "- Produced by: %s %s\n", m.Tool, m.ToolVersion)
 	fmt.Fprintf(&b, "- Exported: %s\n", m.ExportedAt)
 	fmt.Fprintf(&b, "- Records: %d (sequence %d to %d)\n", m.Records, m.FirstSeq, m.LastSeq)
 	if m.FirstRecord != "" {
@@ -549,4 +607,66 @@ func verifyInstructions(m BundleManifest, note string) string {
 	b.WriteString("about anyone's compliance with anything.\n")
 
 	return b.String()
+}
+
+// writeArchive streams the bundle into w and fills in the manifest.
+func writeArchive(w io.Writer, opts ExportOptions, files []string, manifest *BundleManifest, now func() time.Time) error {
+	gz := gzip.NewWriter(w)
+	tw := tar.NewWriter(gz)
+
+	const root = "flugschreiber-evidence"
+
+	// A bundle name is a path inside a tar archive and stays slash separated on
+	// every platform, so it is built with path.Join while the file it is read
+	// from is built with filepath.Join.
+	for _, name := range files {
+		src := filepath.Join(opts.Dir, filepath.FromSlash(name))
+		info, err := os.Stat(src)
+		if err != nil {
+			return err
+		}
+		digest, err := fileDigest(src)
+		if err != nil {
+			return err
+		}
+		if err := writeFileEntry(tw, path.Join(root, name), src, info); err != nil {
+			return err
+		}
+		manifest.Files = append(manifest.Files, BundleFile{
+			Name: name, Bytes: info.Size(), SHA256: digest,
+		})
+		manifest.TotalBytes += info.Size()
+		if name == evidence.CheckpointsFile {
+			manifest.Checkpoints = countLines(src)
+		}
+		if name == evidence.TimestampsFile {
+			manifest.Timestamps = countLines(src)
+		}
+		if name == evidence.PruneAnchorFile {
+			manifest.Pruned = true
+		}
+	}
+	manifest.SealedRecords = countSealed(opts.Dir)
+
+	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	manifestJSON = append(manifestJSON, '\n')
+	if err := writeBytesEntry(tw, path.Join(root, "MANIFEST.json"), manifestJSON, now()); err != nil {
+		return err
+	}
+
+	instructions := []byte(verifyInstructions(*manifest, opts.Note))
+	if err := writeBytesEntry(tw, path.Join(root, "VERIFY.md"), instructions, now()); err != nil {
+		return err
+	}
+
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	if err := gz.Close(); err != nil {
+		return err
+	}
+	return nil
 }

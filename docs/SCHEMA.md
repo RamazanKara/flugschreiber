@@ -186,9 +186,17 @@ saw, not the frames.
 
 ### Encrypted content and erasure
 
-With content encryption on, the text-bearing fields are replaced by
+With content encryption on, `text` and `messages` are replaced by
 `payload.ciphertext` and the record carries a `content.encryption` object naming
-the algorithm and the key that wraps it. The digest is unchanged: it is still
+the algorithm and the key that wraps it.
+
+Tool call arguments and tool results are **discarded rather than sealed**.
+Schema version 1 gives them no ciphertext field, and leaving them in the clear
+would mean an erasure that destroys the prompt and keeps the arguments the model
+was called with, which is not an erasure. Their digests stay, so the record
+still says a tool was called and with what shape of input; the text is gone from
+the moment it is written and no key brings it back. Sealing them properly needs
+schema version 2. The digest is unchanged: it is still
 over the plaintext wire bytes, so an encrypted record proves exactly what an
 unencrypted one proves.
 
@@ -326,6 +334,10 @@ full check it could and could not perform.
 
 ## Compatibility policy
 
+This section covers the log format. What the command line promises is in
+[docs/STABILITY.md](STABILITY.md), and the two are separate promises because
+they are broken in different ways.
+
 `schema_version` is an integer on every event.
 
 Within a major version we will:
@@ -347,3 +359,19 @@ and a verifier from any version can check a log from any other.
 If the hash construction ever has to change, the domain string changes with it
 (`flugschreiber-record-v2`), old segments keep verifying under the old rule, and
 `verify` will handle both.
+
+### What this section does not cover
+
+`content-keys.json` and `content-keys.jsonl` are internal to this
+implementation. They hold wrapped key material, they are never exported,
+archived or handed to anybody, and no third party has to read them, so their
+layout may change in a minor release with a one-way migration. Back the pair up
+together; a keystore restored beside a newer binary is migrated on open, and a
+newer keystore is not readable by an older binary. Losing them destroys stored
+content exactly as thoroughly as an erasure does.
+
+`writer.lock` is transient and names the running process.
+
+Everything else in the directory is covered: segments, `checkpoints.jsonl`,
+`timestamps.jsonl`, `pruned.json`, `public-key.pem`, `keys/retired-*.pem` and
+the bundle a `flugschreiber export` produces.

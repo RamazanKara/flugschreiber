@@ -6,10 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/RamazanKara/flugschreiber/internal/audit"
+	"github.com/RamazanKara/flugschreiber/internal/version"
 )
 
 // Coverage reports what share of recorded traffic was captured and at what
@@ -218,45 +220,63 @@ Flags:
 	}
 
 	res, err := audit.Export(audit.ExportOptions{
-		Dir: *dir, Out: *out, Note: *note, Now: time.Now,
+		ToolVersion: version.String(),
+		Dir:         *dir, Out: *out, Note: *note, Now: time.Now,
 	})
 	if err != nil {
 		return err
 	}
 
 	m := res.Manifest
-	fmt.Printf("wrote %s\n\n", res.Path)
-	fmt.Printf("  files       %d (%s)\n", len(m.Files), humanBytes(m.TotalBytes))
-	fmt.Printf("  records     %d (sequence %d to %d)\n", m.Records, m.FirstSeq, m.LastSeq)
-	if m.FirstRecord != "" {
-		fmt.Printf("  window      %s\n              %s\n", m.FirstRecord, m.LastRecord)
+
+	// When the bundle itself is going to stdout, the summary cannot also go
+	// there: the two interleave and the recipient gets an archive with prose
+	// in the middle of it. Streaming out of a distroless pod is the shape the
+	// Kubernetes handover uses, so it has to be the one that works.
+	w := os.Stdout
+	if isStreamPath(*out) {
+		w = os.Stderr
 	}
-	fmt.Printf("  head hash   %s\n", m.HeadHash)
+	fmt.Fprintf(w, "wrote %s\n\n", res.Path)
+	fmt.Fprintf(w, "  files       %d (%s)\n", len(m.Files), humanBytes(m.TotalBytes))
+	fmt.Fprintf(w, "  records     %d (sequence %d to %d)\n", m.Records, m.FirstSeq, m.LastSeq)
+	if m.FirstRecord != "" {
+		fmt.Fprintf(w, "  window      %s\n              %s\n", m.FirstRecord, m.LastRecord)
+	}
+	fmt.Fprintf(w, "  head hash   %s\n", m.HeadHash)
 	if m.Checkpoints > 0 {
-		fmt.Printf("  checkpoints %d signed\n", m.Checkpoints)
+		fmt.Fprintf(w, "  checkpoints %d signed\n", m.Checkpoints)
 	} else {
-		fmt.Printf("  checkpoints none; the chain shows internal consistency only\n")
+		fmt.Fprintf(w, "  checkpoints none; the chain shows internal consistency only\n")
 	}
 	if n := len(m.RetiredKeys); n > 0 {
-		fmt.Printf("  keys        %d retired public key(s) carried, so checkpoints signed before a rotation still verify\n", n)
+		fmt.Fprintf(w, "  keys        %d retired public key(s) carried, so checkpoints signed before a rotation still verify\n", n)
 	}
 	if m.Timestamps > 0 {
-		fmt.Printf("  anchors     %d RFC 3161 token(s)\n", m.Timestamps)
+		fmt.Fprintf(w, "  anchors     %d RFC 3161 token(s)\n", m.Timestamps)
 	}
 	if m.SealedRecords > 0 {
-		fmt.Printf("  sealed      %d record(s) carry encrypted content; the keys are not in the bundle\n", m.SealedRecords)
+		fmt.Fprintf(w, "  sealed      %d record(s) carry encrypted content; the keys are not in the bundle\n", m.SealedRecords)
 	}
 	if m.Pruned {
-		fmt.Printf("  pruned      yes; pruned.json records what was removed and why\n")
+		fmt.Fprintf(w, "  pruned      yes; pruned.json records what was removed and why\n")
 	}
 	if m.ChainVerified {
-		fmt.Printf("  integrity   verified intact at export\n")
+		fmt.Fprintf(w, "  integrity   verified intact at export\n")
 	} else {
-		fmt.Printf("  integrity   FAILED at export, %d problem(s) recorded in the manifest\n", len(m.Problems))
+		fmt.Fprintf(w, "  integrity   FAILED at export, %d problem(s) recorded in the manifest\n", len(m.Problems))
 	}
 
-	fmt.Printf("\nThe bundle contains no signing key and no client salt.\n")
+	fmt.Fprintf(w, "\nThe bundle contains no signing key, no client salt and no content keys.\n")
 	return nil
+}
+
+// isStreamPath reports whether --out names a stream rather than a file to
+// create. It mirrors the rule in internal/audit, deliberately by repeating it
+// rather than exporting one: this decides where prose goes and that one decides
+// how bytes are written, and they should be free to diverge.
+func isStreamPath(out string) bool {
+	return out == "-" || out == os.DevNull || strings.HasPrefix(filepath.ToSlash(out), "/dev/")
 }
 
 func humanBytes(n int64) string {

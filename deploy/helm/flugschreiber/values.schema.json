@@ -31,6 +31,10 @@
     "fullnameOverride": {
       "type": "string"
     },
+    "tmpSizeLimit": {
+      "type": "string",
+      "description": "Size limit for the pod's scratch volume, used by export and report. Holds no evidence."
+    },
     "commonLabels": {
       "type": "object",
       "additionalProperties": {

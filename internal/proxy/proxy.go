@@ -101,14 +101,49 @@ type capture struct {
 	reqTap  *tap
 	respTap *tap
 
-	status int
-	ttfb   time.Duration
+	// mu guards the fields written after the capture is created. Recording used
+	// to happen only on the goroutine serving the request, so these needed no
+	// guard; a shutdown that records what is still in flight reads them from
+	// another goroutine while that one may still be writing. The taps have
+	// their own lock already.
+	mu        sync.Mutex
+	status    int
+	ttfb      time.Duration
+	abandoned bool
 
 	finished atomic.Bool
+}
 
-	// abandoned marks an interaction the shutdown cut short, so the record can
-	// say so rather than presenting a partial capture as a complete one.
-	abandoned bool
+// setStatus records the outcome, from whichever goroutine learns it first.
+func (c *capture) setStatus(status int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.status = status
+}
+
+// setTTFB records time to first byte.
+func (c *capture) setTTFB(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ttfb = d
+}
+
+// outcome returns the fields the recorder needs, consistently with each other.
+func (c *capture) outcome() (status int, ttfb time.Duration, abandoned bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.status, c.ttfb, c.abandoned
+}
+
+// abandon marks the interaction as cut short by shutdown and fills in a status
+// if none was ever learned.
+func (c *capture) abandon() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.abandoned = true
+	if c.status == 0 {
+		c.status = 499
+	}
 }
 
 // track registers an interaction as in flight.
@@ -155,10 +190,7 @@ func (s *Server) AbandonInFlight() int {
 		if !c.finished.CompareAndSwap(false, true) {
 			continue
 		}
-		c.abandoned = true
-		if c.status == 0 {
-			c.status = 499
-		}
+		c.abandon()
 		s.record(c, nil, errShutdownAbandoned)
 		n++
 	}
@@ -194,7 +226,11 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 		log.Warn("content encryption has no effect in hash mode, which retains no text to encrypt")
 	}
 	if cfg.ContentEncryption && cfg.ContentMode != evidence.ModeHash {
-		keys, keyErr := evidence.OpenContentKeystore(evidence.ContentKeystorePath(cfg.DataDir))
+		keystorePath := cfg.ContentKeystore
+		if keystorePath == "" {
+			keystorePath = evidence.ContentKeystorePath(cfg.DataDir)
+		}
+		keys, keyErr := evidence.OpenContentKeystore(keystorePath)
 		if keyErr != nil {
 			return nil, keyErr
 		}
@@ -395,7 +431,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if rt == nil {
 		// No route matched and no default is configured. The attempt is still
 		// evidence: record it, then answer 502 like any other upstream failure.
-		c.status = http.StatusBadGateway
+		c.setStatus(http.StatusBadGateway)
 		if len(prefix) > 0 {
 			// Feed the peeked prefix through the tap so the record still names the
 			// model that had no route, even though nothing forwarded the body.
@@ -431,8 +467,8 @@ func (s *Server) modifyResponse(resp *http.Response) error {
 	if !ok {
 		return nil
 	}
-	c.status = resp.StatusCode
-	c.ttfb = time.Since(c.start)
+	c.setStatus(resp.StatusCode)
+	c.setTTFB(time.Since(c.start))
 
 	resp.Body = &teeReadCloser{
 		rc:      resp.Body,
@@ -451,7 +487,7 @@ func (s *Server) errorHandler(w http.ResponseWriter, r *http.Request, err error)
 	}
 
 	if c, ok := r.Context().Value(captureKey{}).(*capture); ok {
-		c.status = status
+		c.setStatus(status)
 		s.finish(c, nil, err)
 	}
 
@@ -479,12 +515,13 @@ func (s *Server) finish(c *capture, resp *http.Response, streamErr error) {
 func (s *Server) record(c *capture, resp *http.Response, streamErr error) {
 	reqSum, reqBytes, reqPrefix, reqTrunc := c.reqTap.snapshot()
 	respSum, respBytes, respPrefix, respTrunc := c.respTap.snapshot()
+	status, ttfb, abandoned := c.outcome()
 
 	// An interaction the shutdown cut short holds only what had crossed the
 	// wire by then. The digest covers those bytes and not the exchange the
 	// client saw, so the payload is marked truncated and the interruption is
 	// counted, or the record would present a fragment as the whole thing.
-	if c.abandoned {
+	if abandoned {
 		respTrunc = true
 		s.captureErrors.Add(1)
 		s.metrics.CaptureError(metrics.CaptureErrorAbandoned)
@@ -507,7 +544,7 @@ func (s *Server) record(c *capture, resp *http.Response, streamErr error) {
 
 	var parsedResp *openai.Response
 	switch {
-	case resp == nil || c.status >= 400:
+	case resp == nil || status >= 400:
 		parsedResp = &openai.Response{}
 	case streamed:
 		parsedResp = openai.ParseStream(c.kind, respPrefix)
@@ -532,11 +569,11 @@ func (s *Server) record(c *capture, resp *http.Response, streamErr error) {
 		Usage:              parsedResp.Usage,
 		Stream:             streamed,
 		FinishReasons:      parsedResp.FinishReasons,
-		Status:             c.status,
+		Status:             status,
 		LatencyMS:          msSince(c.start),
 	}
-	if c.ttfb > 0 {
-		ev.TTFBMS = float64(c.ttfb.Microseconds()) / 1000
+	if ttfb > 0 {
+		ev.TTFBMS = float64(ttfb.Microseconds()) / 1000
 	}
 	if streamErr != nil {
 		ev.Error = streamErr.Error()
@@ -595,10 +632,10 @@ func (s *Server) record(c *capture, resp *http.Response, streamErr error) {
 	s.metrics.ObserveRequest(metrics.RequestObservation{
 		Endpoint: metrics.EndpointFor(c.kind),
 		Method:   c.method,
-		Status:   c.status,
+		Status:   status,
 		Stream:   streamed,
 		Duration: time.Since(c.start),
-		TTFB:     c.ttfb,
+		TTFB:     ttfb,
 	})
 	if ev.Usage != nil {
 		s.metrics.AddTokens(ev.ModelServed, ev.Usage.PromptTokens, ev.Usage.CompletionTokens)

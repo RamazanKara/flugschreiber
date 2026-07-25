@@ -31,6 +31,12 @@ nameOverride: ""
 # -- Override the full generated resource name (release-name + chart-name).
 fullnameOverride: ""
 
+# -- Size limit for the pod's scratch volume, which export and report use to
+# build their output before renaming it into place. The root filesystem is
+# read-only, so without somewhere writable those commands fail. It holds no
+# evidence and dies with the pod. Raise it if you export a large log.
+tmpSizeLimit: 1Gi
+
 # -- Labels added to every object this chart creates.
 commonLabels: {}
 # -- Annotations added to every object this chart creates.

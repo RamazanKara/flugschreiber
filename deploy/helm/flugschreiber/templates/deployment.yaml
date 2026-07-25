@@ -140,6 +140,16 @@ spec:
           volumeMounts:
             - name: evidence
               mountPath: {{ .Values.config.dataDir }}
+            {{- /*
+            export and report build their output beside the destination and
+            rename it into place, so they need a writable path. The root
+            filesystem is read-only by design, so without this an operator
+            handing evidence to an auditor gets "read-only file system" from
+            the one command the NOTES tell them to run. D30 records the same
+            fix for Docker as --tmpfs /tmp.
+            */}}
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.config.file.enabled }}
             - name: config
               mountPath: {{ .Values.config.file.mountPath }}
@@ -156,6 +166,11 @@ spec:
       volumes:
         - name: evidence
           {{- include "flugschreiber.evidenceVolume" . | nindent 10 }}
+        # Scratch space for export and report. Never evidence: it is emptyDir
+        # and dies with the pod.
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.tmpSizeLimit | quote }}
         {{- if .Values.config.file.enabled }}
         - name: config
           configMap:

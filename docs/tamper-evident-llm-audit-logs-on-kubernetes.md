@@ -312,7 +312,10 @@ its chain across restarts.
 The point of `verify` reading only files is that it does not need the cluster:
 
 ```bash
-kubectl cp ai/flugschreiber-0:/var/lib/flugschreiber ./evidence-copy
+# The image is distroless, so kubectl cp cannot work: it runs tar inside the
+# container and there is no tar there. Build a bundle and stream it out.
+kubectl exec -n ai flugschreiber-0 -- \
+  flugschreiber export --dir /var/lib/flugschreiber --out /dev/stdout > evidence.tar.gz
 flugschreiber verify --dir ./evidence-copy
 ```
 

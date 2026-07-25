@@ -644,3 +644,84 @@ See D41 for the shutdown ordering that covers the case with no next run.
 
 `pruned.json` and `LEGAL_HOLD` stay on the host. They describe this
 installation's deletions and holds, not the evidence.
+
+## D43. Checkpoints are chained, and the linkage sits outside the v1 signature
+
+A signature makes a checkpoint unforgeable and leaves it deletable. An attacker
+who cannot produce a signature can still remove the attestations: every one left
+behind verifies, nothing reveals the ones that went, and verify reported the log
+intact and attested. Deleting checkpoints.jsonl outright was a clean exit 0.
+
+Checkpoints now carry an index, the hash of their predecessor, and a signature
+over both. The linkage is deliberately not folded into the existing preimage.
+Doing that would have been cleaner to read and would have made every checkpoint
+this version writes fail signature verification in every verifier already
+deployed, which reports as forgery. Manufacturing a false accusation of
+tampering is the one failure this tool must never produce, so the v1 signature
+covers exactly the bytes it always did and the linkage is a second signature
+over a second domain. A v0.4.0 verifier validates these checkpoints unchanged
+and ignores fields it does not know.
+
+Deleting the whole file stays undecidable from the files alone. A public key can
+sit beside a log written with signing off, so an empty checkpoint file cannot be
+told from a log that was never attested, and guessing would accuse honest
+operators. `--require-attestation` is how somebody who knows their log is signed
+turns that into a failure, and `--expect-head` compares against a value recorded
+where the proxy cannot reach it.
+
+## D44. Verify distinguishes a broken chain from one it could not check
+
+`OK()` meant zero problems of any severity, so a medium "this checkpoint names a
+key I do not have" printed `HASH CHAIN VERIFICATION FAILED` and exited 1 over a
+chain the next line of the same output called intact and attested. A bundle
+forwarded without a retired key, a PVC that failed to mount, and a genuine
+rewrite were one number.
+
+There are now three: 0 for a clean check, 1 for a chain that is damaged, and 2
+for a check that could not be completed. A scheduled job can tell an outage from
+an attack, which it could not before, and the headline for exit 2 says the chain
+is intact as far as it could be read. `Intact()` is the narrower predicate;
+`OK()` still means everything passed.
+
+## D45. Open refuses a second writer, and repair finishes an interrupted write
+
+Two servers on one directory both started, because Open wrote the lock file
+rather than consulting it. The single-writer rule was enforced by the Helm chart
+and nowhere else, so Docker, systemd and bare metal had none. Two servers
+against one directory produce nineteen high-severity problems, sequence numbers
+repeating, links broken throughout, permanently and shaped exactly like
+tampering.
+
+The refusal is conditional, because the original reasoning was right as far as
+it went: a proxy that will not start because of a stale lock has turned a crash
+into an outage. So a lock whose process is gone is taken, a lock held by a live
+process on this host is refused, and a lock from another host is refused because
+liveness cannot be checked across a shared volume. `--force-writer-lock` is for
+the operator who knows the other host is stopped and cannot prove it to us.
+
+The mirror image is a torn final record, which is what a power loss leaves
+inside the fsync window. It stopped the writer permanently, with no repair
+command, so a proxy that lost one record went on to record nothing at all.
+`flugschreiber repair` removes the fragment and appends a system_event saying
+what it removed. It refuses when a checkpoint attests past the damage: the
+premise of the command is that the fragment was never a complete record, and a
+signature over it says otherwise, so truncating would destroy signed evidence.
+
+## D46. The content keystore is outside the format promise, and appends
+
+Minting a content key rewrote the whole keystore, and a key is minted per
+request whenever the caller sends no session header, so writing one cost 3 ms at
+five hundred keys and 14 ms at seven and a half thousand, on the request path,
+under the lock. Total cost quadratic, and a large store needed more memory to
+open than the chart grants the container.
+
+Keys are now appended to a journal and folded in every few hundred, which is
+flat at 1.2 ms whatever the store holds. The fsync per key stays: a key that is
+not on disk when the machine dies cannot decrypt the record already written
+under it.
+
+The keystore and its journal are stated in docs/SCHEMA.md as internal to this
+implementation, outside the compatibility promise. They hold wrapped key
+material, they are never exported or archived, and no third party reads them, so
+their layout may change with a one-way migration. Everything a third party does
+read is covered by the promise.
