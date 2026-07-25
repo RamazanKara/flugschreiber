@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// conformanceDir is evidence written by v1.0 and frozen. Every other test in
+// conformanceDir is evidence written by v0.5.0 and frozen. Every other test in
 // this repository writes a log and reads it back in the same process with the
 // same code, so all of that coverage is same-version round-trip and none of it
 // would notice the day a change stopped this build reading what an earlier one
@@ -52,7 +52,7 @@ func TestFrozenEvidenceStillVerifies(t *testing.T) {
 
 	out, err := run(t, bin, "verify", "--dir", conformanceDir, "--json")
 	if err != nil {
-		t.Fatalf("the frozen evidence no longer verifies, so this build cannot read a log it wrote at 1.0: %v\n%s", err, out)
+		t.Fatalf("the frozen evidence no longer verifies, so this build cannot read a log an earlier one wrote: %v\n%s", err, out)
 	}
 
 	var got struct {

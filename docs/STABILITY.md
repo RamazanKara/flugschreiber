@@ -11,7 +11,25 @@ CronJob alerts on `verify`'s exit status. A promise of stability that never says
 which surfaces it covers either freezes everything by accident or breaks
 somebody's monitoring in a minor release and calls it a bugfix.
 
-Within a major version:
+## What is promised at 0.x, and what is not
+
+This is a 0.x release, and under semantic versioning that means a minor version
+may still break any of it. Read what follows as the contract 1.0 will freeze,
+written down now so that it is settled by argument rather than by accident, and
+so that the shape of it can be criticised before it is binding.
+
+Concretely: everything below is what the project intends to keep, and a break
+before 1.0 will be a considered decision recorded in `CHANGELOG.md` rather than
+a surprise. After 1.0 it is a promise and a break needs a major version. If you
+are automating against this today, pin a version and read the changelog on
+upgrade; that is good advice for any 0.x and it is honest advice for this one.
+
+The log format is the exception and is stricter already. `docs/SCHEMA.md`
+governs it, evidence written today has to stay verifiable for years whatever the
+tool does next, and `testdata/conformance` holds a frozen log that fails the
+build if this stops being true.
+
+Within a major version, once there is one:
 
 - A command is not removed or renamed.
 - A flag is not removed, renamed, or given a different meaning.

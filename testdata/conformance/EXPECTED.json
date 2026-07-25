@@ -1,5 +1,5 @@
 {
-  "note": "Frozen evidence written by v1.0. A verifier from any later version must still reach these values. See docs/SCHEMA.md; the segments deliberately contain HTML-escaped characters, non-ASCII text, an embedded newline and a quote, because those are what a reimplementation that re-serialises the event instead of hashing its raw bytes gets wrong.",
+  "note": "Frozen evidence written by v0.5.0. A verifier from any later version must still reach these values. See docs/SCHEMA.md; the segments deliberately contain HTML-escaped characters, non-ASCII text, an embedded newline and a quote, because those are what a reimplementation that re-serialises the event instead of hashing its raw bytes gets wrong.",
   "records": 5,
   "segments": 5,
   "checkpoints": 5,

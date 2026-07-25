@@ -507,7 +507,11 @@ deadlines. Those are a human and legal process.
 
 ## Status
 
-Everything on the roadmap through v0.4.0 is implemented.
+Everything on the roadmap through v0.4.0 is implemented, and v0.5.0 is the
+result of auditing what a 1.0 would have to promise: fourteen things that would
+have broken it, mostly failure paths and documents that claimed more than the
+code did. [docs/STABILITY.md](docs/STABILITY.md) says what is settled and what
+is not yet frozen.
 
 Recording: proxy with streaming capture across chat, completions, embeddings and
 the Responses API, tool calls and tool results, multi-upstream routing by model

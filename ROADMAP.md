@@ -1,8 +1,9 @@
 # Roadmap
 
-Everything the previous version of this file planned has shipped. What follows
-is what that was, what is deliberately not being built, and what would come next
-if the gaps below turn out to matter to somebody.
+Everything the original version of this file planned has shipped, and v0.5.0
+added what an audit of a 1.0 promise turned up. What follows is what that was,
+what is deliberately not being built, and what would come next if the gaps below
+turn out to matter to somebody.
 
 The standing rules constrain anything added here: zero Go dependencies, schema
 changes are additive or they are a version bump, the architecture test gates new
@@ -38,6 +39,13 @@ the report's post-market section pre-fills from them. The Annex IV skeleton and
 the Article 50 pack ship in German as well as English, selected with
 `report --lang`.
 
+**v0.5.0: what a 1.0 would have to promise.** Checkpoints chained so deleting an
+attestation is detectable, the single-writer rule enforced by the binary rather
+than only by the chart, `repair` for a write a power loss interrupted, the
+content keystore made flat instead of quadratic, the hash construction pinned to
+bytes with a frozen conformance fixture, and the documents corrected where they
+claimed more than the code did.
+
 ## Explicitly not planned
 
 Multi-writer or HA chains: a single total order is the design, and the chart
@@ -57,6 +65,19 @@ Risk management, human-oversight design and model evaluation: this is the work
 the AI Act asks people to do. A tool that generated it would produce something
 that looked like the work and was not, which is worse than a section marked
 TODO.
+
+## Towards 1.0
+
+v0.5.0 closed the fourteen things an audit found that would have broken a 1.0
+promise: attestations that could be deleted silently, a single-writer rule
+nothing enforced, a torn record that stopped the proxy for good, a hash
+construction nobody could reimplement, and a set of documents that claimed more
+than the code did. `CHANGELOG.md` has the list and `docs/STABILITY.md` has the
+contract.
+
+What 1.0 needs beyond that is time and use. The contract is written down so it
+can be argued with before it binds, and the things below are the known gaps
+somebody will eventually hit.
 
 ## What would come next
 

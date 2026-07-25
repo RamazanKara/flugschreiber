@@ -365,10 +365,12 @@ If the hash construction ever has to change, the domain string changes with it
 `content-keys.json` and `content-keys.jsonl` are internal to this
 implementation. They hold wrapped key material, they are never exported,
 archived or handed to anybody, and no third party has to read them, so their
-layout may change in a minor release with a one-way migration. Back the pair up
-together; a keystore restored beside a newer binary is migrated on open, and a
-newer keystore is not readable by an older binary. Losing them destroys stored
-content exactly as thoroughly as an erasure does.
+layout may change in a minor release. There is no migration path and none is
+promised: if the layout changes, a keystore written by an older version may
+simply not be readable, and the content it protects becomes unreadable with it.
+Back the pair up together, and treat an upgrade the way you would treat any
+change to a file whose loss destroys data. Losing them destroys stored content
+exactly as thoroughly as an erasure does.
 
 `writer.lock` is transient and names the running process.
 

@@ -10,7 +10,7 @@ import (
 
 // CONTRIBUTING.md makes this a project rule: "Update MAPPING.md in the same
 // pull request. A field with no entry there is a field nobody can justify
-// keeping." Nothing enforced it, and by 1.0 seven top-level fields and the
+// keeping." Nothing enforced it, and by v0.5.0 seven top-level fields and the
 // whole content tree had drifted out, including the ones that hold prompts and
 // completions. MAPPING.md is what a DPO reads to build a record of processing,
 // so the fields missing from it were exactly the ones they most needed.

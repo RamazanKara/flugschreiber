@@ -4,11 +4,14 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
-## Unreleased
+## v0.5.0, 2026-07-25
 
-Work towards 1.0, which is a promise of stability rather than a pile of
-features. An audit of what that promise would have to cover found fourteen
-things that would have broken it; these are them.
+An audit of what a 1.0 would have to promise, and the fourteen things that would
+have broken it. None of them were missing features: they were what happens when
+something goes wrong, and documents that promised more than the code delivered.
+
+This is 0.5 rather than 1.0 because the contract is now written down but not yet
+frozen. See [docs/STABILITY.md](docs/STABILITY.md) for what that means.
 
 ### Evidence integrity
 
