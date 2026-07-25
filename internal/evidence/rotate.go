@@ -189,3 +189,43 @@ func recordRotation(dir string, kp *KeyPair, res *RotationResult) (uint64, error
 	}
 	return seq, nil
 }
+
+// RetireResult is what RetirePublicKey did.
+type RetireResult struct {
+	KeyID    string `json:"key_id"`
+	Path     string `json:"path"`
+	Existing bool   `json:"already_retired"`
+}
+
+// RetirePublicKey files a public key under keys/ so that checkpoints signed
+// with it stay verifiable after it stops being the active key.
+//
+// It exists for the external-signer case. Rotation happens at the helper there,
+// where this tool cannot reach it, and the only supported next step was to
+// point signer_public_key at the new key. Doing that left every earlier
+// checkpoint attributed to a key the directory no longer holds, so verify
+// reported unknown_key on all of them, permanently. SECURITY.md says rotation
+// must never strand old checkpoints; this is the operation that keeps that
+// true when the private half is somewhere else.
+//
+// It refuses while a writer holds the directory, and it never overwrites a
+// retired key with a different one.
+func RetirePublicKey(dir, pemPath string) (*RetireResult, error) {
+	if err := refuseWhileWriterHolds(dir, "retire a public key"); err != nil {
+		return nil, err
+	}
+	pub, err := LoadPublicKeyPEM(pemPath)
+	if err != nil {
+		return nil, fmt.Errorf("evidence: retire public key: %w", err)
+	}
+	id := KeyID(pub)
+	rel := filepath.Join(RetiredKeysDir, "retired-"+id+".pem")
+
+	if existing, err := LoadPublicKeyPEM(filepath.Join(dir, rel)); err == nil && existing.Equal(pub) {
+		return &RetireResult{KeyID: id, Path: rel, Existing: true}, nil
+	}
+	if err := retirePublicKey(dir, rel, pub); err != nil {
+		return nil, err
+	}
+	return &RetireResult{KeyID: id, Path: rel}, nil
+}

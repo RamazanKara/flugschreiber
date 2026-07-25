@@ -397,6 +397,12 @@ func TestNewExecSignerRefusesAnUnusableConfiguration(t *testing.T) {
 func TestTheHelperNeverSeesTheProxysOwnCredentials(t *testing.T) {
 	t.Setenv("FLUGSCHREIBER_UPSTREAM_API_KEY", "sk-this-must-not-reach-the-helper")
 	t.Setenv("FLUGSCHREIBER_EVENTS_TOKEN", "nor-this")
+	// The archive credentials arrive under the standard AWS names, which is
+	// what the chart injects and what internal/archive reads. Setting only the
+	// prefixed variables is why this test passed while the claim was false.
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIA-must-not-reach-the-helper")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "nor-this-either")
+	t.Setenv("AWS_SESSION_TOKEN", "nor-this")
 
 	kp := externalKey(t)
 	signer := execSignerFor(t, kp, "env")
@@ -407,5 +413,56 @@ func TestTheHelperNeverSeesTheProxysOwnCredentials(t *testing.T) {
 	}
 	if err := evidence.VerifyCheckpointSignature(kp.Public, c); err != nil {
 		t.Errorf("the checkpoint does not verify: %v", err)
+	}
+}
+
+// A helper that reaches its key through a cloud service needs a credential this
+// package strips by default, so the operator can name it. Guessing that a
+// helper needs everything is how the archive credentials leaked in the first
+// place; guessing it needs nothing would make an HSM behind KMS unusable.
+func TestAHelperCanBeGivenNamedVariablesDeliberately(t *testing.T) {
+	kp := externalKey(t)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(exe, " \t") {
+		t.Skip("the exec signer splits its command on whitespace")
+	}
+	pubPath := filepath.Join(t.TempDir(), "pub.pem")
+	writePublicKeyPEM(t, pubPath, kp.Public)
+
+	t.Setenv(execHelperKeyEnv, hex.EncodeToString(kp.Private))
+	t.Setenv(execHelperModeEnv, "hex")
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIA-deliberate")
+
+	signer, err := NewExecSignerWithEnv(exe+" -test.run=TestExecSignerHelperProcess", pubPath,
+		[]string{"AWS_ACCESS_KEY_ID"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := sampleCheckpoint()
+	if err := evidence.SignCheckpointWith(signer, &c); err != nil {
+		t.Fatalf("a helper given a named variable could not sign: %v", err)
+	}
+
+	// And the passthrough is exactly what was named, not a door held open.
+	env := helperEnv([]string{
+		"AWS_ACCESS_KEY_ID=yes",
+		"AWS_SECRET_ACCESS_KEY=no",
+		"FLUGSCHREIBER_EVENTS_TOKEN=no",
+		"PATH=/usr/bin",
+	}, []string{"AWS_ACCESS_KEY_ID"})
+	joined := strings.Join(env, " ")
+	if !strings.Contains(joined, "AWS_ACCESS_KEY_ID=yes") {
+		t.Error("the named variable did not reach the helper")
+	}
+	for _, unwanted := range []string{"AWS_SECRET_ACCESS_KEY", "FLUGSCHREIBER_EVENTS_TOKEN"} {
+		if strings.Contains(joined, unwanted) {
+			t.Errorf("naming one variable let %s through as well", unwanted)
+		}
+	}
+	if !strings.Contains(joined, "PATH=/usr/bin") {
+		t.Error("an ordinary variable was stripped, so the helper cannot find its own tools")
 	}
 }

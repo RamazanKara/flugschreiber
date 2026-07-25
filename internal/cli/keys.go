@@ -15,12 +15,19 @@ const keysUsage = `Usage: flugschreiber keys <subcommand> [flags]
 Subcommands:
   list    Show the active checkpoint signing key and every key rotation retired
   rotate  Replace the signing key, keeping the old public half
+  retire  File a public key under keys/ so its checkpoints stay verifiable
 
 A rotation retires the old public key to keys/retired-<key id>.pem before it
 touches anything else. Every checkpoint already on disk was signed with that
 key, so a rotation that discarded it would make the log's own history
 unverifiable. The old private key is gone once rotation finishes: nothing on
 this host can sign under it again, which is the point of rotating.
+
+With an external signer the rotation happens at the helper, where this command
+cannot reach the private key. Retire the old public key first, then point
+signer_public_key at the new one; without that step every checkpoint signed
+before the change is attributed to a key this directory no longer holds and
+verify reports it as unverifiable, permanently.
 
 Rotation needs the server stopped. It refuses while a writer holds the
 directory, because one writer and one total order is an operational rule this
@@ -33,11 +40,13 @@ Run "flugschreiber keys <subcommand> -h" for the flags of a subcommand.
 func Keys(args []string) error {
 	if len(args) == 0 {
 		fmt.Print(keysUsage)
-		return errors.New("keys: a subcommand is required, list or rotate")
+		return errors.New("keys: a subcommand is required, one of list, retire or rotate")
 	}
 	switch args[0] {
 	case "list":
 		return keysList(args[1:])
+	case "retire":
+		return keysRetire(args[1:])
 	case "rotate":
 		return keysRotate(args[1:])
 	case "-h", "--help", "help":
@@ -249,7 +258,7 @@ func printRotation(res *evidence.RotationResult) {
 func refuseRotationWithoutALocalKey(cfg config.Config) error {
 	if strings.HasPrefix(cfg.Signer, config.SignerExecPrefix) {
 		return fmt.Errorf(
-			"keys rotate: checkpoints are signed by the external helper %q, so the private key is not in this directory and this command cannot reach it; rotate it wherever the helper keeps it and then point signer_public_key at the new public key",
+			"keys rotate: checkpoints are signed by the external helper %q, so the private key is not in this directory and this command cannot reach it; rotate it wherever the helper keeps it, run \"flugschreiber keys retire --dir DIR --key <old public key>\" so the checkpoints it already signed stay verifiable, and only then point signer_public_key at the new key",
 			strings.TrimPrefix(cfg.Signer, config.SignerExecPrefix))
 	}
 	if cfg.SigningDisabled {
@@ -303,4 +312,61 @@ func commandConfig(path string) (config.Config, error) {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+// keysRetire files a public key under keys/ so its checkpoints stay verifiable.
+func keysRetire(args []string) error {
+	fs := flag.NewFlagSet("keys retire", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), `Usage: flugschreiber keys retire --dir DIR --key FILE
+
+Files a public key under keys/retired-<key id>.pem, so that checkpoints signed
+with it stay verifiable after it stops being the active key.
+
+This is the step an external-signer rotation needs. The private key lives at the
+helper, so "keys rotate" cannot reach it and refuses; the operator rotates it
+there and repoints signer_public_key. Without retiring the old public key first,
+every checkpoint signed before the change is attributed to a key this directory
+no longer holds, and verify reports it as unverifiable from then on.
+
+  flugschreiber keys retire --dir DIR --key ./old-public-key.pem
+
+Retiring a key already on file is not an error and changes nothing, so this is
+safe to put in a runbook. It refuses while a writer holds the directory.
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+	var (
+		dir    = fs.String("dir", "", "evidence directory (required)")
+		key    = fs.String("key", "", "PEM public key to retire (required)")
+		asJSON = fs.Bool("json", false, "emit the result as JSON")
+	)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" || *key == "" {
+		fs.Usage()
+		return errors.New("keys retire: --dir and --key are required")
+	}
+
+	res, err := evidence.RetirePublicKey(*dir, *key)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return emitJSON(res)
+	}
+	if res.Existing {
+		fmt.Printf("key %s was already retired\n\n", res.KeyID)
+	} else {
+		fmt.Printf("key retired\n\n")
+	}
+	fmt.Printf("  directory   %s\n", *dir)
+	fmt.Printf("  key id      %s\n", res.KeyID)
+	fmt.Printf("  kept at     %s\n", res.Path)
+	fmt.Printf("\nCheckpoints signed with this key verify against that file. It stays in the\n")
+	fmt.Printf("directory permanently and travels with every export.\n")
+	return nil
 }

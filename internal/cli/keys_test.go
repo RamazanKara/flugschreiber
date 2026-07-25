@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -307,5 +308,85 @@ func TestKeysRefusesAnUnknownSubcommand(t *testing.T) {
 		if code, _ := runCLI(t, args...); code != 1 {
 			t.Errorf("Main(%v) = %d, want 1", args, code)
 		}
+	}
+}
+
+// With an external signer the rotation happens at the helper, so the only way
+// to keep earlier checkpoints verifiable is to retire the old public key here.
+// Without it every checkpoint signed before the change is attributed to a key
+// the directory no longer holds, permanently.
+func TestRetiringAPublicKeyKeepsItsCheckpointsVerifiable(t *testing.T) {
+	dir := t.TempDir()
+	kp, err := evidence.LoadOrCreateKeyPair(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := evidence.Open(evidence.Options{Dir: dir, Keys: kp, SegmentMaxBytes: 400})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 8 {
+		if err := s.Append(&evidence.Event{
+			EventType: evidence.EventInference,
+			RequestID: fmt.Sprintf("req-%d", i),
+			Status:    200,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keep a copy of the old public key, then replace it as an external
+	// rotation would: a new key becomes active and the old one is gone.
+	oldPub := filepath.Join(t.TempDir(), "old-public-key.pem")
+	raw, err := os.ReadFile(filepath.Join(dir, evidence.PublicKeyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldPub, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	newKeyDir := t.TempDir()
+	newKP, err := evidence.LoadOrCreateKeyPair(newKeyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRaw, err := os.ReadFile(filepath.Join(newKeyDir, evidence.PublicKeyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, evidence.PublicKeyFile), newRaw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = newKP
+
+	// This is the state an operator lands in today: the old checkpoints name a
+	// key nothing here holds.
+	before, err := evidence.Verify(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.OK() {
+		t.Fatal("the fixture did not reproduce the stranded state, so this proves nothing")
+	}
+
+	if err := Keys([]string{"retire", "--dir", dir, "--key", oldPub}); err != nil {
+		t.Fatalf("keys retire: %v", err)
+	}
+
+	after, err := evidence.Verify(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.OK() {
+		t.Errorf("retiring the old public key did not make its checkpoints verifiable again: %v", after.Problems)
+	}
+
+	// Running it twice is not an error, so it is safe in a runbook.
+	if err := Keys([]string{"retire", "--dir", dir, "--key", oldPub}); err != nil {
+		t.Errorf("retiring an already retired key failed: %v", err)
 	}
 }

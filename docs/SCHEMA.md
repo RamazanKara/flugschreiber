@@ -77,6 +77,32 @@ compiled today can check a log written by a future version whose event fields it
 does not understand. Hashing a parsed struct would make every schema change look
 like tampering in historical logs.
 
+**`event_bytes` means the exact byte span the `event` member occupies in the
+line, as it appears in the file.** Not a re-serialisation of the parsed value.
+Take the substring and hash it; do not parse it and print it again. This is the
+one rule a reimplementation has to get right, and getting it wrong produces a
+false accusation of tampering rather than an obvious failure, so it is worth
+being blunt about.
+
+Two properties of the file make the distinction bite. Go's JSON encoder escapes
+`<`, `>` and `&` as `\u003c`, `\u003e` and `\u0026`, so a prompt containing
+HTML, XML, code or an ampersand is stored escaped, and a reader that parses and
+re-serialises will emit the literal characters instead and compute a different
+digest. Whitespace inside the object is equally load-bearing: a record written
+by hand with spaces between the members hashes differently from the same value
+written compactly, and both are valid JSON for the same event.
+
+In Python that is `raw[line.index(b'"event":') + 8:-1]` territory rather than
+`json.dumps(json.loads(line)["event"])`. Most JSON libraries expose the raw span
+somehow: Go has `json.RawMessage`, Rust's serde has `&RawValue`, and in the
+worst case a byte scan for the member and a brace-matching walk is a dozen lines
+and exact.
+
+`testdata/conformance/` in the repository holds a small evidence directory with
+its expected head hash, written specifically so a reimplementation can check
+itself against bytes rather than against prose. It includes content with
+escaped characters and non-ASCII text for this reason.
+
 No field can contain a newline: `seq` is decimal, `timestamp` is RFC3339, and
 the hashes are hex. The delimiter is therefore unambiguous without length
 prefixes.

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -68,6 +69,10 @@ type ExecSigner struct {
 	pub     ed25519.PublicKey
 	keyID   string
 	timeout time.Duration
+
+	// passEnv names variables to let through that would otherwise be stripped,
+	// for a helper that legitimately needs a cloud credential to reach the key.
+	passEnv []string
 }
 
 // NewExecSigner returns a Signer backed by an external command.
@@ -79,6 +84,13 @@ type ExecSigner struct {
 // is checked for consistency at every signature, and the file's key id is what
 // the checkpoints record.
 func NewExecSigner(command string, publicKeyPEMPath string) (evidence.Signer, error) {
+	return NewExecSignerWithEnv(command, publicKeyPEMPath, nil)
+}
+
+// NewExecSignerWithEnv is NewExecSigner with an explicit passthrough list, for
+// a helper that reaches its key through a cloud service and therefore needs a
+// credential this package otherwise strips.
+func NewExecSignerWithEnv(command string, publicKeyPEMPath string, passEnv []string) (evidence.Signer, error) {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
 		return nil, errors.New("custody: exec signer: no command given")
@@ -102,6 +114,7 @@ func NewExecSigner(command string, publicKeyPEMPath string) (evidence.Signer, er
 		pub:     pub,
 		keyID:   evidence.KeyID(pub),
 		timeout: DefaultExecSignerTimeout,
+		passEnv: passEnv,
 	}, nil
 }
 
@@ -129,7 +142,7 @@ func (s *ExecSigner) Sign(preimage []byte) ([]byte, error) {
 	// writer goroutine stops here for good, which is the one way a signing
 	// helper could cost records rather than checkpoints.
 	cmd.WaitDelay = s.timeout
-	cmd.Env = helperEnv(os.Environ())
+	cmd.Env = helperEnv(os.Environ(), s.passEnv)
 	cmd.Stdin = bytes.NewReader(preimage)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &limitedWriter{w: &stdout, remaining: execSignerMaxOutput}
@@ -159,13 +172,45 @@ func (s *ExecSigner) Sign(preimage []byte) ([]byte, error) {
 // stays a leaf of the configuration graph.
 const configEnvPrefix = "FLUGSCHREIBER_"
 
+// credentialEnv names the variables a signing helper is not given.
+//
+// The FLUGSCHREIBER_ prefix covers this tool's own configuration: the upstream
+// API key, the events token, the archive settings. The AWS variables are here
+// because the archive credentials also arrive through the standard names, which
+// is what the chart injects and what internal/archive reads, so stripping only
+// the prefix handed the helper write credentials for the offsite copy that
+// exists to survive compromise of this host. SECURITY.md claimed otherwise and
+// the guard test passed because it set only prefixed variables.
+//
+// A helper that genuinely needs them, one talking to AWS KMS, is why
+// ExecSignerPassEnv exists: the operator names what to let through rather than
+// the tool guessing that everything is fine.
+var credentialEnv = []string{
+	"AWS_ACCESS_KEY_ID",
+	"AWS_SECRET_ACCESS_KEY",
+	"AWS_SESSION_TOKEN",
+}
+
 // helperEnv is the environment a signing helper is given: everything a program
-// needs to find its module, its card reader and its own configuration, and
-// none of this process's credentials.
-func helperEnv(environ []string) []string {
+// needs to find its module, its card reader and its own configuration, and none
+// of this process's credentials.
+func helperEnv(environ []string, pass []string) []string {
+	allowed := make(map[string]bool, len(pass))
+	for _, name := range pass {
+		allowed[strings.TrimSpace(name)] = true
+	}
+
 	out := make([]string, 0, len(environ))
 	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if allowed[name] {
+			out = append(out, kv)
+			continue
+		}
 		if strings.HasPrefix(kv, configEnvPrefix) {
+			continue
+		}
+		if slices.Contains(credentialEnv, name) {
 			continue
 		}
 		out = append(out, kv)

@@ -1,0 +1,17 @@
+{
+  "note": "Frozen evidence written by v1.0. A verifier from any later version must still reach these values. See docs/SCHEMA.md; the segments deliberately contain HTML-escaped characters, non-ASCII text, an embedded newline and a quote, because those are what a reimplementation that re-serialises the event instead of hashing its raw bytes gets wrong.",
+  "records": 5,
+  "segments": 5,
+  "checkpoints": 5,
+  "first_seq": 1,
+  "last_seq": 5,
+  "head_hash": "673cf258625fb16cef49648f738584b3170eaf233e66e36fd02fe356c0615ead",
+  "key_id": "31aeb5d2d27ebe42",
+  "record_hashes": [
+    {"seq": 1, "record_hash": "992199b39fb49d8ec236e204a24f3c84ea34e02542d796da85af0972db5fb19f"},
+    {"seq": 2, "record_hash": "8c646f49bc85aa74230ad9d9bbc697690b49a4c3e764b3f815cab3e1b75ddc46"},
+    {"seq": 3, "record_hash": "24cf56bcd74e00eebb48840f9875255c0b89fc7210d790bb1b67a6fef59fbe25"},
+    {"seq": 4, "record_hash": "26c286c276c0cce538106e786aeb152465728768767af96bf897d89bb5f4b78d"},
+    {"seq": 5, "record_hash": "673cf258625fb16cef49648f738584b3170eaf233e66e36fd02fe356c0615ead"}
+  ]
+}
