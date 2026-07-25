@@ -26,6 +26,7 @@ Commands:
   keys      Show or rotate the checkpoint signing key
   archive-verify  Check that the archive holds every sealed segment
   erase     Destroy the stored content of a session (crypto-shredding)
+  repair    Finish a write a power loss interrupted, so the server can start
   version   Print build information
 
 Run "flugschreiber <command> -h" for the flags of a command.
@@ -63,6 +64,8 @@ func Main(args []string) int {
 		err = ArchiveVerify(args[1:])
 	case "erase":
 		err = Erase(args[1:])
+	case "repair":
+		err = Repair(args[1:])
 	case "version":
 		PrintVersion()
 		return 0

@@ -93,6 +93,12 @@ type Options struct {
 	// delays shutdown by at most this long.
 	ArchiveShutdownTimeout time.Duration
 
+	// ForceWriterLock takes the evidence directory even when another writer
+	// appears to hold it. It exists for the shared-volume case after a node
+	// failure, where the holder is on a host this process cannot ask about.
+	// Setting it while a writer really is running breaks the chain permanently.
+	ForceWriterLock bool
+
 	// Now is injectable so that tests and golden files are deterministic.
 	Now func() time.Time
 }
@@ -265,7 +271,7 @@ func Open(opts Options) (*Store, error) {
 	// The lock is claimed before any background worker starts, so that a
 	// failure here cannot leave goroutines running behind a Store that Open
 	// never returned.
-	if err := writeWriterLock(opts.Dir); err != nil {
+	if err := claimWriterLock(opts.Dir, opts.ForceWriterLock); err != nil {
 		return nil, err
 	}
 
@@ -690,6 +696,17 @@ func recoverChainHead(dir string, segs []SegmentInfo) (uint64, string, error) {
 	for i := len(segs) - 1; i >= 0; i-- {
 		head, err := segmentHead(segs[i].Path)
 		if err != nil {
+			// A torn final line is the ordinary result of a power loss or a
+			// full disk inside the fsync window, and it stops the writer dead.
+			// Naming the command that finishes the interrupted write is the
+			// difference between a restart and an operator editing evidence by
+			// hand, which is the one thing this design tells them never to do.
+			if torn, ferr := FindTornRecord(dir); ferr == nil && torn != nil {
+				return 0, "", fmt.Errorf(
+					"evidence: %s ends in a partial record of %d byte(s) at offset %d, left by a write that did not finish: %w. "+
+						"Run flugschreiber repair --dir %s to remove the fragment and record the repair in the chain",
+					torn.Segment, torn.Bytes, torn.Offset, err, dir)
+			}
 			return 0, "", fmt.Errorf("evidence: recover chain head from %s: %w", filepath.Base(segs[i].Path), err)
 		}
 		if head != nil {

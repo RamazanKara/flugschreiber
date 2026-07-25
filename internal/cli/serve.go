@@ -79,6 +79,8 @@ Every flag can also be set as an environment variable, for example
 			"how often to anchor a checkpoint (default 1h); an authority is somebody else's rate-limited service")
 		maxBytes = fs.Int64("retention-max-bytes", 0,
 			"size cap for the evidence directory, reported as a gauge; it never overrides the retention floor")
+		forceWriterLock = fs.Bool("force-writer-lock", false,
+			"take the evidence directory even when another writer appears to hold it; only for a holder on another host that is known to be stopped")
 		contentEncryption = fs.Bool("content-encryption", false,
 			"encrypt stored content at rest, so an erasure request can destroy a key rather than the chain")
 	)
@@ -225,6 +227,7 @@ Every flag can also be set as an environment variable, for example
 
 	store, err := evidence.Open(evidence.Options{
 		Dir:                cfg.DataDir,
+		ForceWriterLock:    *forceWriterLock,
 		SegmentMaxBytes:    cfg.SegmentMaxBytes,
 		Keys:               keys,
 		Signer:             extSigner,

@@ -6,6 +6,7 @@ package proxy
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -99,7 +100,7 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 	if err != nil {
 		return nil, err
 	}
-	salt, err := loadOrCreateSalt(cfg.DataDir)
+	salt, saltCreated, err := loadOrCreateSalt(cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +147,26 @@ func New(cfg config.Config, store *evidence.Store, log *slog.Logger) (*Server, e
 		return nil, err
 	}
 	s.router = router
+
+	// A fresh salt starts a new pseudonym space: the same caller now hashes to
+	// a different client_hash than it did before. Without a marker in the chain
+	// the change is invisible, and the answer to "which caller made this
+	// request" is silently wrong on both sides of it.
+	//
+	// Only worth recording when the directory already holds records. A first
+	// run has nothing before it for the new pseudonyms to be confused with, and
+	// a marker in every new deployment would be noise that teaches operators to
+	// skim past the one that matters.
+	if saltCreated && store.Appended() == 0 && hasExistingRecords(cfg.DataDir) {
+		if err := store.Append(&evidence.Event{
+			EventType: evidence.EventConfigChange,
+			Note: fmt.Sprintf(
+				"a new client salt was created, so caller pseudonyms from here on belong to salt %s and cannot be compared with any client_hash recorded before this point",
+				SaltID(salt)),
+		}); err != nil {
+			return nil, fmt.Errorf("proxy: record the new client salt: %w", err)
+		}
+	}
 	return s, nil
 }
 
@@ -520,28 +541,89 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// loadOrCreateSalt returns the per-installation salt used for client identity
-// hashing, creating it on first run. It is kept out of the evidence directory's
-// exported bundle so that identifiers cannot be reversed by anyone who
-// receives the logs.
-func loadOrCreateSalt(dir string) ([]byte, error) {
+// clientSaltBytes is the salt length. Anything shorter on disk is damage, not a
+// salt, and must never be silently replaced.
+const clientSaltBytes = 32
+
+// loadOrCreateSalt returns the per-installation salt that pseudonymises caller
+// credentials, and reports whether it had to create one. It is excluded from
+// every evidence export, so that a bundle's recipient cannot reverse an
+// identifier even holding a list of candidate credentials.
+//
+// A salt that changes turns one caller into several actors in the log, and the
+// change is invisible: every record before it and after it is internally
+// consistent, the chain still verifies, and the answer to "which caller was
+// responsible for this traffic" is silently wrong in both directions. So a file
+// that exists but is not a usable salt is refused rather than overwritten. The
+// previous behaviour treated a short read as absent, because a truncated file
+// returns no error, and quietly minted a new pseudonym space.
+//
+// It is written with the same care as the signing key: fsynced, and the
+// directory entry fsynced after it, because a salt that is lost to a crash is a
+// salt that will be regenerated on the next start.
+func loadOrCreateSalt(dir string) (salt []byte, created bool, err error) {
 	path := filepath.Join(dir, "client-salt")
 	b, err := os.ReadFile(path)
-	if err == nil && len(b) >= 32 {
-		return b, nil
+	switch {
+	case err == nil && len(b) >= clientSaltBytes:
+		return b, false, nil
+	case err == nil:
+		return nil, false, fmt.Errorf(
+			"proxy: %s holds %d byte(s) and a salt is %d: refusing to replace it, because a new salt gives every existing caller a new identity "+
+				"and nothing in the log would mark the boundary. Restore the file from backup, or remove it deliberately to start a new pseudonym space",
+			path, len(b), clientSaltBytes)
+	case !os.IsNotExist(err):
+		return nil, false, fmt.Errorf("proxy: read client salt: %w", err)
 	}
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("proxy: read client salt: %w", err)
-	}
-	salt := make([]byte, 32)
+
+	salt = make([]byte, clientSaltBytes)
 	if _, err := rand.Read(salt); err != nil {
-		return nil, fmt.Errorf("proxy: generate client salt: %w", err)
+		return nil, false, fmt.Errorf("proxy: generate client salt: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if err := os.WriteFile(path, salt, 0o600); err != nil {
-		return nil, fmt.Errorf("proxy: write client salt: %w", err)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, false, fmt.Errorf("proxy: write client salt: %w", err)
 	}
-	return salt, nil
+	if _, err := f.Write(salt); err != nil {
+		f.Close()
+		return nil, false, fmt.Errorf("proxy: write client salt: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return nil, false, fmt.Errorf("proxy: fsync client salt: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return nil, false, err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return salt, true, nil
+}
+
+// hasExistingRecords reports whether the directory already holds a chain, which
+// is what makes a newly created salt a boundary rather than a beginning.
+func hasExistingRecords(dir string) bool {
+	segs, err := evidence.Segments(dir)
+	if err != nil {
+		return false
+	}
+	for _, s := range segs {
+		if info, err := os.Stat(s.Path); err == nil && info.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// SaltID identifies a salt without disclosing it, so that a config_change can
+// name the pseudonym space a run is using and a reader can see where one ended
+// and another began.
+func SaltID(salt []byte) string {
+	sum := sha256.Sum256(append([]byte("flugschreiber-client-salt-id\n"), salt...))
+	return hex.EncodeToString(sum[:8])
 }

@@ -2,21 +2,30 @@ package evidence
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
-// WriterLockFile names the file an open Store leaves behind it in the evidence
+// WriterLockFile names the file an open Store holds while it owns the evidence
 // directory.
 //
-// It is advisory and it is deliberately not a mutual exclusion mechanism. Two
-// writers in one directory is not a race this package tries to arbitrate, it is
-// an operational error the design forbids outright (one writer, one total
-// order). What the file is for is the opposite direction: operations that
-// mutate key material or delete files can see that a writer holds the
-// directory and refuse, instead of doing half of something underneath it.
+// It serves two purposes. Operations that mutate key material or delete files
+// consult it and refuse rather than working underneath a running writer. And
+// Open consults it to enforce the single-writer rule, which used to be left to
+// the operator: two servers on one directory both started, interleaved their
+// records, and produced a chain that fails from the first concurrent append
+// onwards and fails in a way that is indistinguishable from tampering. The
+// damage is permanent and there is no repair, so it has to be refused rather
+// than documented.
+//
+// A lock outlives the process that wrote it when that process is killed, and a
+// proxy that will not record because of a stale file has turned a crash into an
+// outage. So the refusal is conditional on the holder actually being alive; see
+// claimWriterLock.
 const WriterLockFile = "writer.lock"
 
 // WriterLock is what an open Store records about itself, so that a refusal can
@@ -61,11 +70,75 @@ func ReadWriterLock(dir string) *WriterLock {
 	return &l
 }
 
-// writeWriterLock claims dir for this process. It replaces a lock left behind
-// by a process that died rather than refusing to start: a proxy that will not
-// record because of a stale file has turned a crash into an outage, and the
-// single-writer rule is an operational guarantee rather than one this file can
-// enforce.
+// claimWriterLock takes the directory for this process, or explains who has it.
+//
+// The three cases are different and only one of them is a refusal worth making:
+//
+//   - No lock, or a lock whose holder is gone. Take it. A crash must not cost
+//     an outage, and the previous holder is provably not appending.
+//   - A lock whose holder is alive on this host. Refuse. This is the case that
+//     corrupts the chain, and the operator can see both processes.
+//   - A lock from another host. Refuse, because liveness cannot be checked
+//     across a shared volume and guessing wrong corrupts the log permanently.
+//     This is the case force is for.
+//
+// force skips the refusal for an operator who knows the holder is gone and
+// cannot prove it to us, which is the shared-volume case after a node failure.
+func claimWriterLock(dir string, force bool) error {
+	held := ReadWriterLock(dir)
+	if held != nil && !force {
+		host, _ := os.Hostname()
+		switch {
+		case held.PID == 0:
+			return fmt.Errorf(
+				"evidence: %s exists but names no process, so this directory may already have a writer; "+
+					"stop any running server, then remove %s or start with --force-writer-lock",
+				WriterLockFile, filepath.Join(dir, WriterLockFile))
+		case held.Host != "" && host != "" && held.Host != host:
+			return fmt.Errorf(
+				"evidence: %s is held by %s and this is %s, so whether it is still writing cannot be checked from here; "+
+					"two writers on one directory break the chain permanently. Confirm the other host is stopped, then start with --force-writer-lock",
+				WriterLockFile, held, host)
+		case processAlive(held.PID):
+			return fmt.Errorf(
+				"evidence: %s is held by %s, which is still running; two writers on one directory interleave records and break the chain permanently. "+
+					"Stop it first, or point this server at a different --data-dir",
+				WriterLockFile, held)
+		}
+	}
+	return writeWriterLock(dir)
+}
+
+// processAlive reports whether pid is a process this host still has. It answers
+// conservatively: anything it cannot determine counts as alive, because a wrong
+// "dead" lets a second writer in and a wrong "alive" costs one manual override.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return true
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		// Windows reports a missing process here. Unix never does.
+		return false
+	}
+	err = p.Signal(syscall.Signal(0))
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, os.ErrProcessDone):
+		return false
+	case errors.Is(err, os.ErrPermission):
+		// Somebody else's process, which means it exists.
+		return true
+	default:
+		// A platform that does not implement signal probing, or an error we do
+		// not recognise. Assume the holder is alive and make the operator say
+		// otherwise.
+		return true
+	}
+}
+
+// writeWriterLock records this process as the holder.
 func writeWriterLock(dir string) error {
 	host, _ := os.Hostname()
 	body, err := json.Marshal(WriterLock{
