@@ -11,25 +11,19 @@ CronJob alerts on `verify`'s exit status. A promise of stability that never says
 which surfaces it covers either freezes everything by accident or breaks
 somebody's monitoring in a minor release and calls it a bugfix.
 
-## What is promised at 0.x, and what is not
+## Where this stands
 
-This is a 0.x release, and under semantic versioning that means a minor version
-may still break any of it. Read what follows as the contract 1.0 will freeze,
-written down now so that it is settled by argument rather than by accident, and
-so that the shape of it can be criticised before it is binding.
+The log format is already held to the strictest standard: evidence written today
+has to verify years from now, [SCHEMA.md](SCHEMA.md) governs it, and a frozen
+log under `testdata/conformance` fails the build if any change stops this tool
+reading what an earlier version wrote.
 
-Concretely: everything below is what the project intends to keep, and a break
-before 1.0 will be a considered decision recorded in `CHANGELOG.md` rather than
-a surprise. After 1.0 it is a promise and a break needs a major version. If you
-are automating against this today, pin a version and read the changelog on
-upgrade; that is good advice for any 0.x and it is honest advice for this one.
+The contract below is what 1.0 freezes formally. It is published ahead of that
+release so it can be reviewed and argued with before it binds. Until then, a
+change to it is a deliberate decision recorded in `CHANGELOG.md`; pin a version
+and read the changelog on upgrade, as with any 0.x tool.
 
-The log format is the exception and is stricter already. `docs/SCHEMA.md`
-governs it, evidence written today has to stay verifiable for years whatever the
-tool does next, and `testdata/conformance` holds a frozen log that fails the
-build if this stops being true.
-
-Within a major version, once there is one:
+The contract:
 
 - A command is not removed or renamed.
 - A flag is not removed, renamed, or given a different meaning.

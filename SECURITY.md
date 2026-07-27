@@ -150,22 +150,18 @@ can open.
 this directory holds, and nothing else. Every backup, volume snapshot and
 object-locked copy taken before the erasure still contains that key, and the
 ciphertext is still in the segments, so anyone holding both can still read the
-content. The hardening checklist tells you to put the evidence directory on
-object-lock storage and to back the keystore up, and both of those are copies an
-erasure cannot touch. Answering a data subject honestly means destroying the
-keystore in those copies too, on whatever schedule your backup retention allows,
-and saying so rather than reporting the content as destroyed on the day the
-command ran. `--content-keystore` puts the keystore somewhere other than the
-snapshotted volume, which makes that job tractable.
+content. Backups and object-locked copies are part of the hardening checklist, so plan
+the erasure procedure around them: destroy the keystore inside those copies on
+your backup retention schedule, and state that timeline when answering the
+request. `--content-keystore` puts the keystore somewhere other than the
+snapshotted volume, which keeps that procedure small.
 
-**Erasure needs a session to scope to.** `erase` selects by `--session` or
+**Erasure scopes by session.** `erase` selects by `--session` or
 `--request-id`. A session id exists only when the calling application sends
-`X-Flugschreiber-Session`, and the headline deployment in the README changes no
-application code, so in that shape every record has an empty session and the
-only usable selector is the request id of each record in turn. The identifier
-that is always present is `client_hash`, which identifies a credential rather
-than a person and is deliberately not offered as an erasure selector. If you
-expect to answer erasure requests, send the session header.
+`X-Flugschreiber-Session`; without it the selector is the request id of each
+record in turn. `client_hash` identifies a credential rather than a person and
+is deliberately not offered as an erasure selector. If you expect to answer
+erasure requests, send the session header from day one.
 
 **Erasure as an attack.** `erase` is destructive by design and cannot be undone.
 It requires an explicit confirmation, refuses while a `LEGAL_HOLD` is in force,

@@ -88,7 +88,7 @@ head somewhere the proxy cannot reach. `SECURITY.md` has the rest.
 | `usage` | Token accounting as reported by the upstream | Absent when the upstream does not report it, which is common for streaming without `stream_options.include_usage`. |
 | `tool_calls` | Function calls the model requested, with name and index | The *request* to call a tool. Whether it was executed, and what it returned, happens in your application. |
 | `finish_reasons` | Why generation stopped | `length` here is often the more interesting signal: it means output was cut off. |
-| `tool_results` | What your application sent back after a tool call: the call id, a digest and a byte count, plus the text in `store` mode | Recorded on the following inference event, because that is the request that carries them. In `store` mode this holds tool output verbatim, which is frequently the most sensitive content in the log: a tool that reads a database returns rows. With content encryption on, tool text is **discarded rather than sealed**, because schema version 1 gives it no ciphertext field; the digest stays. |
+| `tool_results` | What your application sent back after a tool call: the call id, a digest and a byte count, plus the text in `store` mode | Recorded on the following inference event, because that is the request that carries them. In `store` mode this holds tool output verbatim, which is frequently the most sensitive content in the log: a tool that reads a database returns rows. With content encryption on, tool text is not stored, because schema version 1 gives it no ciphertext field to seal it into; the digest stays. |
 | `decision`, `note`, `actor` | What a human decided, in their words, and who they were | Free text, written by whoever holds the events token. Not verified. |
 
 Where this runs out: Article 26 also covers human oversight, input data
@@ -171,8 +171,8 @@ Worth stating plainly, because the gaps matter more than the coverage:
   a recognised endpoint is proxied through and not recorded. That includes
   vLLM's `/score`, `/classify` and `/pooling`, `/v1/audio/transcriptions`, and
   Ollama's native `/api/chat` and `/api/generate`. They reach the model server
-  and leave no trace in the log, no metric and no line in `coverage`. If your
-  applications use them, the log understates what the system did.
+  and are not recorded. Check whether your applications use them before relying
+  on coverage figures.
 - **Traffic that does not pass through it.** Coverage is a deployment property.
   `flugschreiber coverage` reports what share of observed traffic was
   captured and in which mode, but it cannot report on traffic that bypassed the

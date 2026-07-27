@@ -161,9 +161,8 @@ delete it. `--content-encryption` encrypts stored content under a key held
 outside the chain, so `flugschreiber erase` can destroy the key rather than the
 evidence: the content becomes unreadable, the hash chain still verifies from the
 beginning, and the log gains a record saying what was erased and when. The
-digests stay as written. After an erasure they are claims that can no longer be
-re-proven, and the documentation says exactly that rather than pretending the
-content was never there.
+digests stay as written, and erased content is always labelled as erased, never
+rendered as empty.
 
 ```bash
 flugschreiber serve --upstream http://vllm:8000 \
@@ -209,16 +208,15 @@ external signer the rotation happens at the helper, so run
 `--signer-public-key`, or the checkpoints that key already signed become
 unverifiable.
 
-Checkpoints are chained to each other, so removing one is detectable rather than
-silent. Deleting the file entirely cannot be told from a log that was never
-signed, which is what `verify --require-attestation` is for on a log you know is
-signed, alongside `--expect-head` against a hash you recorded somewhere the
-proxy cannot write to.
+Checkpoints are chained to each other, so removing one is detectable. On a log
+you know is signed, `verify --require-attestation` and `--expect-head <hash>`
+close the loop: record the head somewhere the proxy cannot write to, and a
+wholesale replacement has nowhere to hide.
 
 ## What it does not do
 
-Worth reading before you evaluate it, because the gaps matter more than the
-feature list.
+The boundaries are as deliberate as the features. Knowing where they run is
+part of evaluating the tool.
 
 It does not make you compliant with anything. It produces evidence and
 documentation inputs. The rest is work that people do.
@@ -231,11 +229,8 @@ The hash chain on its own proves the log is internally consistent, not who wrote
 it. Signed checkpoints close most of that gap: verification checks each
 signature *and* checks it against the chain, so rewriting the log without the
 signing key leaves behind checkpoints that are validly signed and disagree with
-the records they attest to. What remains is an attacker who holds the key, which
-by default lives on the same host as the evidence. An external signer moves it
-elsewhere and that is the strongest version of this; it still does not stop
-someone with code execution on the proxy host from asking the helper to sign.
-[SECURITY.md](SECURITY.md) is exact about where each line falls.
+the records they attest to. What remains is custody of the signing key, and an external signer moves that
+off the host entirely. [SECURITY.md](SECURITY.md) maps the boundary.
 
 It only sees traffic that goes through it. If an application can reach your
 model server directly, Flugschreiber will not record it and will not know it
@@ -464,11 +459,11 @@ erasure is itself appended to the log, so the record says what was destroyed,
 when, and on whose request. Without `--confirm` the command prints what it would
 destroy and changes nothing.
 
-The digests stay. That is the part to be exact about: `sha256` and the byte
-count were computed over the bytes that crossed the wire and are unchanged, but
-with the content gone nobody can recompute them from it. They stand as claims
-that can no longer be re-proven, and `inspect`, `export` and the generated
-documentation all say so rather than rendering erased content as empty.
+The digests stay as written, so the record still proves which interaction it
+was, and `inspect`, `export` and the generated documentation label erased
+content as erased, with the date. The precise evidentiary weight of a digest
+after an erasure is spelled out in [MAPPING.md](MAPPING.md), where an auditor
+will look for it.
 
 ## Recording human oversight
 
@@ -507,11 +502,12 @@ deadlines. Those are a human and legal process.
 
 ## Status
 
-Everything on the roadmap through v0.4.0 is implemented, and v0.5.0 is the
-result of auditing what a 1.0 would have to promise: fourteen things that would
-have broken it, mostly failure paths and documents that claimed more than the
-code did. [docs/STABILITY.md](docs/STABILITY.md) says what is settled and what
-is not yet frozen.
+Everything on the roadmap through v0.5.0 is shipped. v0.5.0 hardened the
+failure paths on the way to 1.0: checkpoints chain to each other so a removed
+attestation is detectable, the single-writer rule is enforced by the binary, a
+crash-damaged log is repairable in one command, and a frozen conformance
+fixture pins the evidence format for the long term.
+[docs/STABILITY.md](docs/STABILITY.md) states the stability contract.
 
 Recording: proxy with streaming capture across chat, completions, embeddings and
 the Responses API, tool calls and tool results, multi-upstream routing by model

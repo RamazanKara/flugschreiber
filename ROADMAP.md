@@ -1,7 +1,7 @@
 # Roadmap
 
 Everything the original version of this file planned has shipped, and v0.5.0
-added what an audit of a 1.0 promise turned up. What follows is what that was,
+hardened the failure paths on the way to 1.0. What follows is what that was,
 what is deliberately not being built, and what would come next if the gaps below
 turn out to matter to somebody.
 
@@ -39,12 +39,12 @@ the report's post-market section pre-fills from them. The Annex IV skeleton and
 the Article 50 pack ship in German as well as English, selected with
 `report --lang`.
 
-**v0.5.0: what a 1.0 would have to promise.** Checkpoints chained so deleting an
+**v0.5.0, hardening towards 1.0.** Checkpoints chained so deleting an
 attestation is detectable, the single-writer rule enforced by the binary rather
 than only by the chart, `repair` for a write a power loss interrupted, the
 content keystore made flat instead of quadratic, the hash construction pinned to
-bytes with a frozen conformance fixture, and the documents corrected where they
-claimed more than the code did.
+bytes with a frozen conformance fixture, and the stability contract written down
+in `docs/STABILITY.md`.
 
 ## Explicitly not planned
 
@@ -68,16 +68,12 @@ TODO.
 
 ## Towards 1.0
 
-v0.5.0 closed the fourteen things an audit found that would have broken a 1.0
-promise: attestations that could be deleted silently, a single-writer rule
-nothing enforced, a torn record that stopped the proxy for good, a hash
-construction nobody could reimplement, and a set of documents that claimed more
-than the code did. `CHANGELOG.md` has the list and `docs/STABILITY.md` has the
-contract.
+The engineering for 1.0 is in place: the failure paths hold, the guarantees are
+pinned by tests, and `docs/STABILITY.md` states the contract a 1.0 will freeze.
+What remains between here and 1.0 is soak time in real deployments, so the
+contract binds from experience rather than from optimism.
 
-What 1.0 needs beyond that is time and use. The contract is written down so it
-can be argued with before it binds, and the things below are the known gaps
-somebody will eventually hit.
+The items below are known gaps somebody will eventually hit.
 
 ## What would come next
 

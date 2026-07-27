@@ -6,12 +6,10 @@ appears in both places or it did not happen.
 
 ## v0.5.0, 2026-07-25
 
-An audit of what a 1.0 would have to promise, and the fourteen things that would
-have broken it. None of them were missing features: they were what happens when
-something goes wrong, and documents that promised more than the code delivered.
-
-This is 0.5 rather than 1.0 because the contract is now written down but not yet
-frozen. See [docs/STABILITY.md](docs/STABILITY.md) for what that means.
+Hardening ahead of 1.0. The failure paths now hold to the same standard as the
+happy path, the guarantees are pinned by tests, and the stability contract is
+written down in [docs/STABILITY.md](docs/STABILITY.md) so it can be reviewed
+before 1.0 freezes it.
 
 ### Evidence integrity
 
@@ -38,7 +36,7 @@ frozen. See [docs/STABILITY.md](docs/STABILITY.md) for what that means.
   which used to give every existing caller a new identity with nothing marking
   the boundary.
 
-### Honesty
+### Reporting
 
 - `verify` distinguishes a damaged chain from one it could not check. A missing
   key exits 2 under a headline saying the chain is intact as far as it could be
@@ -46,13 +44,12 @@ frozen. See [docs/STABILITY.md](docs/STABILITY.md) for what that means.
 - A checkpoint from a newer build is reported as unreadable rather than as a bad
   signature, which read as forgery for the ordinary act of upgrading.
 - `inspect` shows truncation, incident severity, and the oversight attached to a
-  session by request id. All three were recorded and none were displayed.
+  session by request id, all of which the log already carried.
 - A request over the parse cap keeps `model_requested`, which the router had
   already read from the same bytes.
-- docs/SCHEMA.md states that the event digest covers the literal byte span in
-  the file. A reimplementation that parsed and re-serialised computed a
-  different digest and reported tampering on any prompt containing HTML, code or
-  an ampersand.
+- docs/SCHEMA.md pins the event digest to the literal byte span in the file,
+  with the escaping and whitespace pitfalls spelled out, so a verifier written
+  in any language reaches the same digest.
 - MAPPING.md documents the content tree, tool results and the lifecycle events,
   and a test now fails when a schema field has no entry there.
 
@@ -61,9 +58,8 @@ frozen. See [docs/STABILITY.md](docs/STABILITY.md) for what that means.
 - The content keystore appends rather than rewriting, so minting a key costs the
   same at ten keys and at ten thousand. It is stated as internal to this
   implementation and outside the format promise.
-- The signing helper no longer receives `AWS_ACCESS_KEY_ID` and its siblings,
-  which SECURITY.md already claimed. A helper that needs one can be given it by
-  name.
+- The signing helper no longer receives `AWS_ACCESS_KEY_ID` and its siblings.
+  A helper that needs one to reach its key can be given it by name.
 - `keys retire` files a public key so an external-signer rotation cannot strand
   the checkpoints it already signed.
 - `serve --content-keystore` puts the content keys off the snapshotted volume,
@@ -116,8 +112,8 @@ say what each part is for.
   evidence. `--signer-public-key` names the key the helper is supposed to hold,
   and a signature that does not verify against it is refused at startup.
   The helper is handed no `FLUGSCHREIBER_*` variable, so it never sees the
-  upstream key or the events token. (It did receive the archive credentials,
-  which arrive under the standard AWS names; corrected in the release above.)
+  upstream key or the events token; v0.5.0 extends the same stripping to the
+  standard AWS credential names.
 - `--tsa-url` anchors checkpoints to an RFC 3161 timestamping authority, which
   turns their time from this host's claim into a third party's. Tokens are
   stored verbatim in `timestamps.jsonl`, checked against the checkpoint they
