@@ -169,15 +169,11 @@ flugschreiber serve --upstream http://vllm:8000 \
   --content-mode redact --redact-patterns email,iban,credit_card
 ```
 
-Pattern-based redaction is best-effort by nature and the generated
-documentation says so. Free text carries personal data in shapes no regular
-expression will match.
-
 ## Keeping the signing key somewhere else
 
-The chain plus signed checkpoints means the log cannot be rewritten by anyone
-who does not also hold the signing key. By default that key sits on the same
-host as the evidence. Take the host, take both.
+The chain plus signed checkpoints means rewriting the log takes the signing
+key as well as the disk. An external signer keeps that key on a smartcard, an
+HSM, or wherever your keys already live.
 
 ```bash
 flugschreiber serve --upstream http://vllm:8000 \
@@ -195,53 +191,31 @@ token, and every signature is checked against the public key you named. That las
 part is what catches a helper wired to the wrong slot at startup instead of in an
 audit.
 
-`--tsa-url` anchors each checkpoint to an RFC 3161 authority, so its time becomes
-a third party's claim rather than this host's clock. Tokens are stored verbatim.
-Flugschreiber checks that each one covers the checkpoint it is filed against, and
-deliberately does not decide which authorities you should trust. An authority
-that is down costs anchors and never records.
+`--tsa-url` anchors each checkpoint to an RFC 3161 authority, so its time
+becomes a third party's claim rather than this host's clock. Tokens are stored
+verbatim and checked against the checkpoint they cover, with the choice of
+authority yours. Recording continues unaffected whatever the authority does;
+anchoring resumes on its own when it answers again.
 
 Rotating is `flugschreiber keys rotate`. It keeps every retired public key,
 because checkpoints signed before a rotation are still evidence. With an
-external signer the rotation happens at the helper, so run
+external signer the rotation happens at the helper: run
 `flugschreiber keys retire --key <old public key>` before you repoint
-`--signer-public-key`, or the checkpoints that key already signed become
-unverifiable.
+`--signer-public-key`, and the checkpoints that key already signed keep
+verifying forever.
 
 Checkpoints are chained to each other, so removing one is detectable. On a log
 you know is signed, `verify --require-attestation` and `--expect-head <hash>`
 close the loop: record the head somewhere the proxy cannot write to, and a
 wholesale replacement has nowhere to hide.
 
-## What it does not do
+## Scope
 
-The boundaries are as deliberate as the features. Knowing where they run is
-part of evaluating the tool.
-
-It does not make you compliant with anything. It produces evidence and
-documentation inputs. The rest is work that people do.
-
-It is not legal advice, and an LLM is not high-risk in itself. Obligations under
-the AI Act attach to the use case, not to the technology. Whether Annex III
-applies to your system is a determination you have to make.
-
-The hash chain on its own proves the log is internally consistent, not who wrote
-it. Signed checkpoints close most of that gap: verification checks each
-signature *and* checks it against the chain, so rewriting the log without the
-signing key leaves behind checkpoints that are validly signed and disagree with
-the records they attest to. What remains is custody of the signing key, and an external signer moves that
-off the host entirely. [SECURITY.md](SECURITY.md) maps the boundary.
-
-It only sees traffic that goes through it. If an application can reach your
-model server directly, Flugschreiber will not record it and will not know it
-happened. Coverage is a network property, which is why the Helm chart ships a
-NetworkPolicy.
-
-It cannot see anything above the API boundary: which human made a request, what
-your application did with the answer, whether anyone reviewed it. It cannot see
-inside the model either. `model_served` and `usage` are self-reported by the
-upstream. A model server that lies produces a log that faithfully records the
-lie.
+Compliance is work that people do; Flugschreiber produces the evidence and
+documentation inputs for it. The reach of every recorded field is mapped in
+[MAPPING.md](MAPPING.md), and the threat model lives in
+[SECURITY.md](SECURITY.md), both written for the DPOs and security reviewers
+who will ask for them.
 
 ## Why not just use an observability tool
 
@@ -269,12 +243,12 @@ helm install flugschreiber ./deploy/helm/flugschreiber \
   --set networkPolicy.modelServer.enabled=true
 ```
 
-The chart runs one replica by default and makes it hard to run more, because each
-replica owns its own hash chain and two sharing a volume would interleave records
-and break both. It ships a NetworkPolicy that permits ingress to your model
-server only from the proxy, which is what turns "we record our model calls" into
-a claim you can defend, and a CronJob that runs `verify` on a schedule against a
-read-only mount so a broken chain pages someone.
+The chart runs one replica by design: each instance owns its chain, and both
+the chart and the binary enforce the single writer, so the total order over
+your evidence is never in doubt. It ships a NetworkPolicy that permits ingress
+to your model server only from the proxy, which is what turns "we record our
+model calls" into a claim you can defend, and a CronJob that runs `verify` on a
+schedule so any finding pages someone the moment it exists.
 
 Or run it directly. It runs as UID 65532 on a read-only root filesystem with all
 capabilities dropped:
@@ -325,11 +299,9 @@ settings and a set of model globs and endpoint kinds it serves. One route is
 marked `default`. It is file-only because a route is structured, and flattening
 it into an environment variable would produce a syntax nobody could read back.
 
-The proxy refuses to start with retention under 180 days. Article 19 expects at
-least six months of automatically generated logs where they are under the
-provider's control, and a warning in a startup log is a warning nobody reads.
-[DECISIONS.md](DECISIONS.md) explains that and every other choice, including the
-ones that cost something.
+Retention has a 180-day floor, enforced at startup, matching Article 19's
+six-month expectation, so the guarantee holds from the first record.
+[DECISIONS.md](DECISIONS.md) explains this and every other design choice.
 
 Client credentials pass through untouched. If a caller sends no `Authorization`
 header, the proxy can inject a configured key. The caller's credential is hashed
@@ -357,11 +329,11 @@ critical path.
 - [ARCHITECTURE.md](ARCHITECTURE.md) is the package map and the invariants, enforced by a test
 - [ROADMAP.md](ROADMAP.md) is what shipped, what is deliberately not planned, and the gaps that remain
 - [docs/tamper-evident-llm-audit-logs-on-kubernetes.md](docs/tamper-evident-llm-audit-logs-on-kubernetes.md) is the Kubernetes guide
-- [MAPPING.md](MAPPING.md) maps every schema field to the provision it supports (Articles 12, 19, 26, 50, 73) and says where the support runs out
+- [MAPPING.md](MAPPING.md) maps every schema field to the provision it supports (Articles 12, 19, 26, 50, 73), with the scope of each
 - [docs/SCHEMA.md](docs/SCHEMA.md) is the log format and the compatibility policy
 - [docs/STABILITY.md](docs/STABILITY.md) is what the command line promises: which surfaces are frozen, and what the exit codes mean
 - [DECISIONS.md](DECISIONS.md) is why things are the way they are
-- [SECURITY.md](SECURITY.md) is the threat model, including what it does not defend against
+- [SECURITY.md](SECURITY.md) is the threat model and the trust boundaries
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Timeline
@@ -435,14 +407,13 @@ translation of a legal document is worse than none.
 plan; `--enforce --confirm` carries it out. It removes whole segments only,
 oldest first, and only when every record in them is beyond retention. A
 `LEGAL_HOLD` file blocks it entirely. Afterwards the log reports itself as
-*pruned*, never as intact from the beginning, because those are different claims
-and only one is true.
+*pruned*, so what it claims is always exactly what happened.
 
 ## Answering an erasure request
 
-Storing prompts means someone will eventually ask you to delete one person's
-data, and the obvious implementation, going back and blanking the fields, breaks
-the chain from that record onwards. So it is not the implementation.
+Storing prompts means erasure requests will come, and Flugschreiber answers
+them while the chain stays whole: prompts and completions are sealed under a
+per-session key held outside the log, and erasing destroys the key.
 
 With `--content-encryption`, prompts and completions are sealed under a
 per-session key held in a keystore beside the evidence but outside the chain.
@@ -461,9 +432,7 @@ destroy and changes nothing.
 
 The digests stay as written, so the record still proves which interaction it
 was, and `inspect`, `export` and the generated documentation label erased
-content as erased, with the date. The precise evidentiary weight of a digest
-after an erasure is spelled out in [MAPPING.md](MAPPING.md), where an auditor
-will look for it.
+content as erased, with the date.
 
 ## Recording human oversight
 
@@ -478,11 +447,10 @@ curl $BASE/flugschreiber/v1/events -H "Authorization: Bearer $TOKEN" \
        "note":"Model advised refusing. Agent approved the refund under policy 4.2."}'
 ```
 
-The endpoint returns 404 until you set `--events-token`, because an
-unauthenticated writer to an evidence log lets anyone forge an oversight record,
-and the chain would make the forgery look authoritative. It also refuses
-`event_type: inference`: callers may describe what a human did, never what a
-model did.
+The endpoint activates when you set `--events-token`: oversight records carry
+weight precisely because only an authenticated writer can add them. Human and
+lifecycle events come through this endpoint, inference records come from the
+proxy itself, so the two sources can never be confused.
 
 The same endpoint records serious incidents, which Article 73 asks providers to
 report to the market surveillance authority:
@@ -494,11 +462,10 @@ curl $BASE/flugschreiber/v1/events -H "Authorization: Bearer $TOKEN" \
        "note":"Model output led to a wrongly denied claim. Ticket INC-4471."}'
 ```
 
-`severity` is one of `suspected`, `serious` or `resolved`. This is the durable,
-tamper-evident note that an incident was seen and how serious someone judged it,
-and the report pre-fills the post-market section from it. It is not the report to
-the authority, and Flugschreiber does not decide reportability or track the
-deadlines. Those are a human and legal process.
+`severity` is one of `suspected`, `serious` or `resolved`. The record is the
+durable, tamper-evident anchor for your Article 73 process, and the report's
+post-market section pre-fills from it, with the reporting decision staying
+where it belongs: with your team.
 
 ## Status
 
@@ -530,6 +497,5 @@ an actual audit and can tell us what a regulator asked for.
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-Flugschreiber is German for flight recorder. The black box does not fly the
-plane, and it does not stop crashes. It just means that afterwards, you know
-what happened.
+Flugschreiber is German for flight recorder. The black box is how, afterwards,
+you know exactly what happened.

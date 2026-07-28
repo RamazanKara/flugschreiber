@@ -1,7 +1,7 @@
 # Field mapping: log schema to AI Act provisions
 
-This document says which recorded field supports which obligation, and, more usefully,
-where the support runs out.
+This document says which recorded field supports which obligation, and the
+scope of that support.
 
 Read this first: A field appearing in this table does not mean the
 obligation is met. It means Flugschreiber records something an assessment of
@@ -31,7 +31,7 @@ compatibility policy.
 | `endpoint`, `method`, `upstream` | Where the request went | `upstream` is scheme, host and path only; any credential in the configured URL is not recorded. |
 | `status`, `error`, `latency_ms`, `ttfb_ms` | Outcome and timing | `latency_ms` is measured at the proxy, so it includes upstream time. |
 
-Where this runs out: Article 12(3) contemplates logging over the *lifetime*
+Scope: Article 12(3) contemplates logging over the *lifetime*
 of the system, including events outside inference: deployment, configuration
 change, model replacement. Flugschreiber sees the API boundary. Changes to
 prompts, retrieval corpora, tool definitions and thresholds happen elsewhere and
@@ -58,7 +58,7 @@ have to be recorded elsewhere.
 | Segment rotation | Bounded files, chain continues across boundaries | |
 | S3 archival of sealed segments | Ships rotated segments, the checkpoints, the anchors and every public key to object storage, with optional Object Lock | Archival, not the write path. S3 cannot append, so the local segment is always primary. `pruned.json` and `LEGAL_HOLD` stay on the host, so a directory restored from the archive alone is verifiable but is not a complete evidence directory. `flugschreiber archive-verify` reports which parts it could and could not check. |
 
-Where this runs out, and this is the one to read carefully. The hash chain proves the log
+Scope, and the part to read carefully. The hash chain proves the log
 is internally consistent. On its own it does not prove who wrote it: someone with
 write access to the entire evidence directory could recompute the whole chain
 from scratch and produce a log that verifies perfectly.
@@ -91,7 +91,7 @@ head somewhere the proxy cannot reach. `SECURITY.md` has the rest.
 | `tool_results` | What your application sent back after a tool call: the call id, a digest and a byte count, plus the text in `store` mode | Recorded on the following inference event, because that is the request that carries them. In `store` mode this holds tool output verbatim, which is frequently the most sensitive content in the log: a tool that reads a database returns rows. With content encryption on, tool text is not stored, because schema version 1 gives it no ciphertext field to seal it into; the digest stays. |
 | `decision`, `note`, `actor` | What a human decided, in their words, and who they were | Free text, written by whoever holds the events token. Not verified. |
 
-Where this runs out: Article 26 also covers human oversight, input data
+Scope: Article 26 also covers human oversight, input data
 relevance, and informing affected persons. Flugschreiber records the
 `human_intervention` event type once you send interventions to its events endpoint, but it
 cannot design or perform oversight.
@@ -120,7 +120,7 @@ record a data protection assessment is actually about.
 | `transparency-article-50-de.md` | The same in German | Same caveat. |
 | Observed traffic summary | Evidence that generation is happening and at what volume | Flugschreiber cannot see whether output reaches a natural person directly, which is what actually triggers 50(1). |
 
-Where this runs out: Article 50(2) requires machine-readable marking of
+Scope: Article 50(2) requires machine-readable marking of
 synthetic output. Flugschreiber does not mark content. It is a proxy, and the
 marking has to happen where content leaves your system. The guidance note in the
 pack explains the practical options. `request_id` is offered as the key that
@@ -133,7 +133,7 @@ ties a marked artefact back to the evidence log.
 | `incident` event, `severity` | A human's conclusion that something went wrong, at one of `suspected`, `serious`, `resolved`, written into the chain through the authenticated events endpoint | Records that an incident was noticed and how serious someone judged it. It is not the report to the authority, and Flugschreiber does not decide reportability or track deadlines. |
 | `ref_request_id`, `actor` | Which interaction the incident concerns and who reported it | The link is only as good as the request id the reporter supplies. |
 
-Where this runs out: Article 73 sets reporting obligations and timelines that are
+Scope: Article 73 sets reporting obligations and timelines that are
 a human and legal process. The incident record is the durable, tamper-evident
 note that the process can point back to; the report's post-market section
 pre-fills the incidents observed, and marks the reporting decision itself as a
@@ -157,9 +157,9 @@ sentence on what belongs there.
 | 8. Declaration of conformity | No. |
 | 9. Post-market monitoring | No. The evidence log is an input to the plan, not the plan. |
 
-## What Flugschreiber structurally cannot see
+## The vantage point
 
-Worth stating plainly, because the gaps matter more than the coverage:
+Flugschreiber observes the API boundary. Outside that boundary:
 
 - **Anything above the API.** Which end user made a request, what the
   application did with the answer, whether a human reviewed it.
@@ -179,6 +179,5 @@ Worth stating plainly, because the gaps matter more than the coverage:
   proxy entirely. If an application talks to the model server directly,
   Flugschreiber will not know and will not say so.
 
-The last point is the one most likely to produce a false sense of coverage.
-Network policy, not this proxy, is what makes the proxy unavoidable; the Helm
-chart ships a `NetworkPolicy` for exactly this reason.
+Network policy is what makes the proxy the only route to the model server, and
+the Helm chart ships a `NetworkPolicy` for exactly this reason.

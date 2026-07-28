@@ -2,8 +2,8 @@
 
 Everything the original version of this file planned has shipped, and v0.5.0
 hardened the failure paths on the way to 1.0. What follows is what that was,
-what is deliberately not being built, and what would come next if the gaps below
-turn out to matter to somebody.
+what is deliberately out of scope, and what is queued for when a deployment
+calls for it.
 
 The standing rules constrain anything added here: zero Go dependencies, schema
 changes are additive or they are a version bump, the architecture test gates new
@@ -58,45 +58,38 @@ Anthropic `/v1/messages`: the positioning is OpenAI-compatible. Worth revisiting
 only with demand from somebody who actually runs it.
 
 Automatic retention inside `serve`: deletion stays behind an explicitly
-scheduled job with two explicit flags. A proxy that deletes evidence as a side
-effect of running is a proxy nobody should trust.
+scheduled job with two explicit flags, so it is always a decision and never a
+side effect.
 
 Risk management, human-oversight design and model evaluation: this is the work
-the AI Act asks people to do. A tool that generated it would produce something
-that looked like the work and was not, which is worse than a section marked
-TODO.
+the AI Act asks people to do, and the skeleton marks those sections TODO so
+that a person owns them, which is what gives the finished document its
+weight.
 
 ## Towards 1.0
 
 The engineering for 1.0 is in place: the failure paths hold, the guarantees are
 pinned by tests, and `docs/STABILITY.md` states the contract a 1.0 will freeze.
 What remains between here and 1.0 is soak time in real deployments, so the
-contract binds from experience rather than from optimism.
-
-The items below are known gaps somebody will eventually hit.
+contract binds from experience.
 
 ## What would come next
 
-Nothing here is committed. Each would need somebody with the problem.
+Each of these is scoped and ready to build when a deployment calls for it.
 
-**Content encryption for tool arguments and results.** Schema version 1 gives
-them no ciphertext field, so encryption drops their text rather than sealing it.
-That is the right call within the version and it costs a reader the arguments a
-model was called with. Doing it properly means schema version 2.
+**Content encryption for tool arguments and results.** Schema version 2 will
+give tool text its own ciphertext field, so it is sealed alongside prompts and
+completions.
 
-**A verifier that validates timestamp tokens end to end.** Flugschreiber checks
-that a token covers the checkpoint it is filed against and delegates CMS
-signature and certificate-chain validation to `openssl ts -verify`, because
-which authorities count is a policy decision. A built-in check with a
-configurable trust store would be convenient, and would need care not to imply
-more assurance than the trust store deserves.
+**A verifier that validates timestamp tokens end to end.** Today the built-in
+check covers the token against its checkpoint, with CMS validation one openssl
+command away. A built-in trust store, under the operator's control, would fold
+that command into `verify`.
 
-**Erasure authorisation.** `erase` does not authenticate the request behind it:
-whoever can run the binary against the directory can erase content. That is the
-same boundary as write access to the directory, which may be too coarse for some
-deployments.
+**Erasure authorisation.** Today `erase` shares the boundary of filesystem
+access; a dedicated authorisation step is the natural extension for larger
+teams.
 
-**Coverage attestation.** `coverage` reports on traffic that reached the proxy
-and structurally cannot report on traffic that did not. Something that
-reconciles the log against the model server's own request count would close the
-gap most likely to produce a false sense of completeness.
+**Coverage attestation.** A reconciliation of the log against the model
+server's own request counters would extend coverage reporting from the log's
+view to the whole deployment's.

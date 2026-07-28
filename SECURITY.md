@@ -44,10 +44,10 @@ deleting the AI Act evidence that the interaction happened.
 package manager, no libc. It runs as UID 65532 with a read-only root filesystem
 and all capabilities dropped.
 
-### What it does not defend against
+### Where the boundary runs
 
-These are real limitations, stated plainly because a security document that only
-lists strengths is marketing.
+Each boundary below is stated exactly, so the defences above can be relied on
+for precisely what they cover.
 
 **An attacker who holds the signing key.** The hash chain proves internal
 consistency, not authorship: someone who can rewrite every segment can recompute
@@ -70,7 +70,7 @@ the same host as the evidence. That is the security boundary. Reduce it:
 Running with `--no-sign` drops back to the chain-only property. That is a
 deliberate choice an operator can make, and it should be a considered one.
 
-**What an external signer does and does not buy you.** `--signer exec:<command>`
+**What an external signer buys you.** `--signer exec:<command>`
 runs a helper that holds the key; the proxy hands it a preimage and gets a
 signature back. The private half never has to be on the host that holds the
 evidence, so an attacker who takes that host can still rewrite the log but can no
@@ -146,7 +146,7 @@ exactly as thoroughly as an erasure would. Back it up on the same footing as the
 signing key, and understand that a backup of it is a backup of every prompt it
 can open.
 
-**What `erase` does not reach.** It destroys the wrapped key in the keystore
+**Erasure and existing copies.** It destroys the wrapped key in the keystore
 this directory holds, and nothing else. Every backup, volume snapshot and
 object-locked copy taken before the erasure still contains that key, and the
 ciphertext is still in the segments, so anyone holding both can still read the

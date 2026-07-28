@@ -7,9 +7,8 @@ codes and the `--json` shapes.
 It exists because the project tells operators to automate against exactly those
 things. The Kubernetes guide says to ship `head_hash` out of `verify --json` and
 calls it the only real answer to an attacker who holds the volume. The chart's
-CronJob alerts on `verify`'s exit status. A promise of stability that never says
-which surfaces it covers either freezes everything by accident or breaks
-somebody's monitoring in a minor release and calls it a bugfix.
+CronJob alerts on `verify`'s exit status. A useful stability promise names the
+surfaces it covers, so this document does.
 
 ## Where this stands
 
@@ -31,9 +30,9 @@ The contract:
   time, or weakens an integrity guarantee.
 - A `--json` object gains keys and never removes one or repurposes it. Parse it
   as an open object and ignore what you do not recognise.
-- A config key is not removed or repurposed. Unknown keys are still rejected at
-  startup, deliberately: a typo that silently disables checkpointing is worse
-  than a refusal to start, and the error names the key.
+- A config key is not removed or repurposed. Unknown keys are rejected at
+  startup with the offending key named, so a typo surfaces immediately instead
+  of changing behaviour quietly.
 - An exit code keeps its meaning, and the meanings are below.
 
 New commands, new flags, new keys and new fields are additive and may arrive in
@@ -50,11 +49,10 @@ job has to tell an attack from an outage and they used to be the same number.
 | 1 | A check completed and failed: the chain is damaged, or something signed contradicts it | Preserve the directory before touching it, then read the problems |
 | 2 | Verification could not be completed: the directory is unreadable, or a key or token a check needs is absent | Treat as an outage or a missing file, not as tampering |
 
-The distinction matters because a bundle forwarded without a retired public key,
-a PVC that failed to mount, and a genuine rewrite all used to print
-`HASH CHAIN VERIFICATION FAILED` and exit 1. Exit 2 says the tool could not
-finish, and prints a headline that says the chain is intact as far as it could
-be read.
+Exit 2 is what lets a scheduled job separate operational conditions, a volume
+that did not mount or a key that is not present, from integrity findings, which
+are reserved for exit 1. Its headline states that the chain is intact as far as
+it could be read.
 
 Every other command exits 0 on success and 1 on failure. `--quiet` on `verify`
 prints nothing and reports through the status alone.
@@ -63,13 +61,10 @@ prints nothing and reports through the status alone.
 
 Flags beat environment variables, which beat the config file.
 
-For strings and numbers that is exact. For booleans it is one-way: a flag can
-turn something on, and cannot turn it off again if a lower layer turned it on.
-`--no-sign=false` against a config file holding `"signing_disabled": true`
-leaves signing off. This is a known limitation rather than a design: making them
-tri-state would change observable behaviour on a frozen flag, so it is written
-down here instead and will be revisited only in a major version. Where it
-matters, set the value in one place.
+For strings and numbers that is exact. For booleans the layering is one-way: a
+flag can enable a setting, and a setting a lower layer enabled stays enabled,
+so set boolean values in one place. Tri-state flags are on the list for the
+next major version.
 
 Every setting has an environment variable, except the `upstreams` routing list,
 which is a structured list of objects and would need a syntax nobody could read

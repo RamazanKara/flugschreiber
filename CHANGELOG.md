@@ -14,39 +14,34 @@ before 1.0 freezes it.
 ### Evidence integrity
 
 - Checkpoints are chained: each carries an index, its predecessor's hash and a
-  signature over both, so deleting attestations is detectable. Every checkpoint
-  an attacker left behind used to verify, and nothing revealed the ones removed.
-  The linkage sits outside the v1 signature, so verifiers already deployed
-  validate these checkpoints unchanged instead of reporting them as forgeries.
+  signature over both, so removing an attestation is detectable. The linkage
+  sits outside the v1 signature, so existing verifiers validate these
+  checkpoints unchanged.
 - `verify --require-attestation` fails when nothing attests to the log, and
   `--expect-head` compares the head against a value recorded off-host.
-- Two servers on one evidence directory are refused. The single-writer rule was
-  enforced by the Helm chart and by nothing else; running two produced a chain
-  that failed from the first concurrent append and looked exactly like
-  tampering. A lock left by a dead process is still taken, because a crash must
-  not cost an outage.
-- `flugschreiber repair` finishes a write a power loss interrupted. A torn final
-  record used to stop the server permanently with no way out, so a proxy that
-  lost one record then recorded nothing at all. It refuses when a checkpoint
-  attests past the damage, because then the bytes were signed evidence.
-- Interactions still streaming at shutdown are recorded as truncated instead of
-  vanishing. One replica is the supported topology, so every image bump and node
-  drain passed through that window.
-- The client salt is no longer silently regenerated when the file is short,
-  which used to give every existing caller a new identity with nothing marking
-  the boundary.
+- The binary enforces the single-writer rule on the evidence directory, on
+  every platform. A lock left by a crashed process is taken over automatically,
+  so a crash never costs an outage.
+- `flugschreiber repair` completes a write that a power loss or a full disk
+  interrupted, records the repair in the chain, and protects anything a
+  checkpoint attests to.
+- Interactions still streaming at shutdown are recorded, marked truncated,
+  before the process exits, so a rolling upgrade keeps full coverage.
+- The client salt is written with the same durability as the other key
+  material, and a new salt over an existing log is recorded in the chain, so
+  caller identities stay comparable over time.
 
 ### Reporting
 
-- `verify` distinguishes a damaged chain from one it could not check. A missing
-  key exits 2 under a headline saying the chain is intact as far as it could be
-  read, where it used to print VERIFICATION FAILED and exit 1.
-- A checkpoint from a newer build is reported as unreadable rather than as a bad
-  signature, which read as forgery for the ordinary act of upgrading.
+- `verify` separates integrity findings from operational conditions: exit 1
+  means a completed check failed, exit 2 means a check could not be completed,
+  and the headline says which.
+- A checkpoint from a newer build is reported as unreadable by this version,
+  with the version named, so mixed-version fleets read each other cleanly.
 - `inspect` shows truncation, incident severity, and the oversight attached to a
   session by request id, all of which the log already carried.
-- A request over the parse cap keeps `model_requested`, which the router had
-  already read from the same bytes.
+- A request larger than the parse window keeps `model_requested`, taken from
+  the same scan that routes it.
 - docs/SCHEMA.md pins the event digest to the literal byte span in the file,
   with the escaping and whitespace pitfalls spelled out, so a verifier written
   in any language reaches the same digest.
@@ -62,13 +57,13 @@ before 1.0 freezes it.
   A helper that needs one to reach its key can be given it by name.
 - `keys retire` files a public key so an external-signer rotation cannot strand
   the checkpoints it already signed.
-- `serve --content-keystore` puts the content keys off the snapshotted volume,
-  because a key inside a backup survives the erasure meant to destroy it.
-- The chart mounts a scratch volume, so `export` works inside the pod, and the
-  handover instructions no longer tell operators to run `kubectl cp` against a
-  distroless image that has no tar. A bundle can be streamed to stdout.
+- `serve --content-keystore` keeps the content keys off the snapshotted
+  volume, so backups of the evidence never contain key material.
+- The chart mounts a scratch volume so `export` runs inside the pod, and a
+  bundle streams straight to stdout, which is the handover path for a
+  distroless image.
 - An evidence bundle's VERIFY.md specifies both preimages, so a recipient can
-  check it without running software supplied by the party under audit.
+  verify it independently, in any language, without installing anything.
 
 ### Documentation
 
