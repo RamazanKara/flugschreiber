@@ -31,6 +31,7 @@ var allowedImports = map[string][]string{
 	"internal/custody": {"internal/evidence"},
 	"internal/config":  {"internal/content", "internal/evidence"},
 	"internal/report":  {"internal/config", "internal/evidence"},
+	"internal/site":    {"internal/report"},
 
 	// Composition layers.
 	"internal/proxy": {
@@ -41,7 +42,7 @@ var allowedImports = map[string][]string{
 		"internal/archive", "internal/audit", "internal/config",
 		"internal/custody", "internal/evidence", "internal/metrics",
 		"internal/mockupstream", "internal/pdf", "internal/proxy",
-		"internal/report", "internal/version",
+		"internal/report", "internal/site", "internal/version",
 	},
 }
 

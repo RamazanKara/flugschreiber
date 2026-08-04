@@ -66,6 +66,8 @@ func Main(args []string) int {
 		err = Erase(args[1:])
 	case "repair":
 		err = Repair(args[1:])
+	case "site":
+		err = Site(args[1:])
 	case "version":
 		PrintVersion()
 		return 0

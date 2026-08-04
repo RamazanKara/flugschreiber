@@ -43,6 +43,7 @@ internal/proxy ──▶ config, content, openai, evidence, metrics, version
 internal/report ──▶ config, evidence          internal/audit ──▶ content, evidence
 internal/config ──▶ content, evidence         internal/openai ──▶ evidence
 internal/content ──▶ evidence                 internal/custody ──▶ evidence
+internal/site ──▶ report
 
 foundations, no internal imports at all:
   evidence   archive   metrics   pdf   mockupstream   version

@@ -1,0 +1,24 @@
+{{template "head" (dict "Title" (printf "%s: Flugschreiber" .Title) "Repo" .Repo)}}
+
+<main id="main" class="docpage{{if .TOC}} has-toc{{end}}">
+  {{if .TOC}}
+  <aside class="toc" aria-label="On this page">
+    <div class="label">On this page</div>
+    <nav>
+      {{range .TOC}}<a href="#{{.ID}}">{{.Text}}</a>{{end}}
+    </nav>
+  </aside>
+  {{end}}
+  <article class="doc">
+    <p class="crumb"><a href="./">Flugschreiber</a> / {{.Title}}</p>
+    <div class="prose{{if not .TOC}} wide{{end}}">
+      {{.TitleHTML}}
+      {{.Body}}
+    </div>
+    <p class="crumb" style="margin-top:3rem">
+      Source: <a href="{{.Repo}}/blob/main/{{.Src}}">{{.Src}}</a>
+    </p>
+  </article>
+</main>
+
+{{template "foot" (dict "Version" .Version "Repo" .Repo)}}

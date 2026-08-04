@@ -1,8 +1,9 @@
 name: Pages
 
-# Publishes the repository's Markdown as the documentation site. Nothing is
-# authored twice: README is the index, the docs pages are the pages, and a
-# change to either is a change to the site on the next push.
+# Builds the project website with `flugschreiber site` and publishes it. The
+# pages are rendered from the repository's own Markdown by the same renderer
+# that produces the compliance documents, so a change to the docs is a change
+# to the site on the next push, and nothing is authored twice.
 
 on:
   push:
@@ -18,16 +19,22 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  GO_VERSION: "1.25"
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/jekyll-build-pages@v1
+      - uses: actions/setup-go@v5
         with:
-          source: ./
-          destination: ./_site
+          go-version: ${{ env.GO_VERSION }}
+      # The build fails on a link that resolves nowhere and on any external
+      # asset reference, so a broken site is a red build rather than a live one.
+      - name: Build the site
+        run: go run ./cmd/flugschreiber site --out ./_site
+      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
 
   deploy:

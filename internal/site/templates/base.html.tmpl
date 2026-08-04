@@ -1,0 +1,48 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="./">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+        <rect width="64" height="64" rx="10" fill="#d64500"/>
+        <rect x="14" y="20" width="30" height="5" fill="#fff"/>
+        <rect x="14" y="30" width="36" height="5" fill="#fff"/>
+        <rect x="14" y="40" width="24" height="5" fill="#fff"/>
+      </svg>
+      flugschreiber
+    </a>
+    <nav>
+      <a href="mapping.html">Field mapping</a>
+      <a href="schema.html">Log format</a>
+      <a href="security.html">Security</a>
+      <a href="{{.Repo}}">GitHub</a>
+    </nav>
+  </div>
+</header>
+{{end}}
+
+{{define "foot"}}
+<footer class="site">
+  <div class="wrap">
+    <span>Flugschreiber {{.Version}}</span>
+    <a href="{{.Repo}}">Source</a>
+    <a href="{{.Repo}}/releases">Releases</a>
+    <a href="{{.Repo}}/blob/main/LICENSE">Apache-2.0</a>
+    <span class="spacer"></span>
+    <span>No telemetry. This page loads nothing from anywhere else.</span>
+    <p class="tagline">Flugschreiber is German for flight recorder. The black box is
+    how, afterwards, you know exactly what happened.</p>
+  </div>
+</footer>
+</body>
+</html>
+{{end}}

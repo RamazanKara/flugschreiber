@@ -1,0 +1,729 @@
+/* Flugschreiber site.
+ *
+ * Direction: technical-editorial. The product is a command-line tool that
+ * speaks in fixed-width output, so its own voice is a monospace. The page is
+ * warm paper and near-black ink, the way a printed record reads, with a single
+ * accent: international orange, the paint colour of the instrument the product
+ * is named after. No gradients, no web fonts, no colour beyond ink, paper and
+ * that one orange. Everything is a system font, so the page owes nothing to a
+ * server nobody promised to keep running, which is the argument the product
+ * itself makes.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --ink: #17140f;
+  --ink-soft: #4a453d;
+  --ink-faint: #7c766b;
+  --paper: #f7f4ee;
+  --paper-raised: #fffdf8;
+  --rule: #e2ddd2;
+  --rule-strong: #cbc4b5;
+
+  /* International orange, the flight-recorder paint. The single accent. */
+  --orange: #d64500;
+  --orange-ink: #b23a00;
+  --orange-wash: #fbeee6;
+
+  --code-bg: #f0ece3;
+
+  --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono",
+    "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+
+  --measure: 42rem;
+  --page: 74rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #ece7dc;
+    --ink-soft: #b7b0a2;
+    --ink-faint: #857f72;
+    --paper: #14120e;
+    --paper-raised: #1c1a15;
+    --rule: #2c2921;
+    --rule-strong: #3d392f;
+    --orange: #ff6a2b;
+    --orange-ink: #ff8552;
+    --orange-wash: #241610;
+    --code-bg: #201d17;
+  }
+}
+
+
+/* The viewer toggle stamps data-theme on the root; it must beat the media
+ * query in both directions, so the tokens are repeated here. */
+:root[data-theme="dark"] {
+    --ink: #ece7dc;
+    --ink-soft: #b7b0a2;
+    --ink-faint: #857f72;
+    --paper: #14120e;
+    --paper-raised: #1c1a15;
+    --rule: #2c2921;
+    --rule-strong: #3d392f;
+    --orange: #ff6a2b;
+    --orange-ink: #ff8552;
+    --orange-wash: #241610;
+    --code-bg: #201d17;
+}
+:root[data-theme="light"] {
+  color-scheme: light dark;
+
+  --ink: #17140f;
+  --ink-soft: #4a453d;
+  --ink-faint: #7c766b;
+  --paper: #f7f4ee;
+  --paper-raised: #fffdf8;
+  --rule: #e2ddd2;
+  --rule-strong: #cbc4b5;
+
+  /* International orange, the flight-recorder paint. The single accent. */
+  --orange: #d64500;
+  --orange-ink: #b23a00;
+  --orange-wash: #fbeee6;
+
+  --code-bg: #f0ece3;
+
+  --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono",
+    "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+
+  --measure: 42rem;
+  --page: 74rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: var(--orange-ink);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+a:hover {
+  color: var(--orange);
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--mono);
+}
+
+/* --- Skip link, for keyboard and screen-reader users -------------------- */
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.5rem 0.9rem;
+  z-index: 10;
+}
+.skip:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+}
+
+/* --- Masthead ----------------------------------------------------------- */
+
+.masthead {
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+.masthead-inner {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0.9rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 0.98rem;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-decoration: none;
+}
+.wordmark:hover {
+  color: var(--ink);
+}
+.wordmark .mark {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: none;
+}
+.masthead nav {
+  margin-left: auto;
+  display: flex;
+  gap: 1.35rem;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+.masthead nav a {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+.masthead nav a:hover {
+  color: var(--orange);
+}
+
+/* --- Shared shell ------------------------------------------------------- */
+
+.wrap {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+footer.site {
+  border-top: 1px solid var(--rule);
+  margin-top: 5rem;
+  padding: 2.5rem 0 3.5rem;
+  color: var(--ink-faint);
+  font-size: 0.85rem;
+}
+footer.site .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  align-items: baseline;
+}
+footer.site a {
+  color: var(--ink-soft);
+}
+footer.site .spacer {
+  margin-left: auto;
+}
+footer.site .tagline {
+  width: 100%;
+  margin-top: 1rem;
+  max-width: var(--measure);
+  line-height: 1.6;
+}
+
+/* --- Landing: hero ------------------------------------------------------ */
+
+.hero {
+  border-bottom: 1px solid var(--rule);
+  padding: 4.5rem 0 4rem;
+}
+.hero .wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 3.5rem;
+  align-items: center;
+}
+.hero .eyebrow {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: var(--orange-ink);
+  margin: 0 0 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.hero .eyebrow::before {
+  content: "";
+  width: 1.6rem;
+  height: 2px;
+  background: var(--orange);
+}
+.hero h1 {
+  font-size: clamp(2.1rem, 4.6vw, 3.1rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  margin: 0 0 1.2rem;
+  font-weight: 680;
+}
+.hero .lede {
+  font-size: 1.12rem;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  margin: 0 0 2rem;
+  max-width: 34rem;
+}
+.hero-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem 1rem;
+  align-items: center;
+}
+.btn {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  padding: 0.62rem 1.15rem;
+  border-radius: 2px;
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+.btn-primary {
+  background: var(--orange);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--orange-ink);
+  color: #fff;
+}
+.btn-ghost {
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+.btn-ghost:hover {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.demo-frame {
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--paper-raised);
+  box-shadow: 0 1px 0 var(--rule), 0 18px 40px -28px rgba(20, 16, 8, 0.5);
+}
+.demo-frame .chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+.demo-frame .chrome span {
+  width: 0.62rem;
+  height: 0.62rem;
+  border-radius: 50%;
+  background: var(--rule-strong);
+}
+.demo-frame .chrome b {
+  margin-left: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ink-faint);
+}
+.demo-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* --- Landing: the claim strip ------------------------------------------- */
+
+.claim {
+  padding: 3.2rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+.claim .wrap {
+  max-width: var(--measure);
+}
+.claim p {
+  font-size: 1.32rem;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  margin: 0;
+  text-wrap: balance;
+}
+.claim .after {
+  margin-top: 1rem;
+  font-size: 1rem;
+  color: var(--ink-soft);
+  letter-spacing: 0;
+}
+
+/* --- Landing: capabilities ---------------------------------------------- */
+
+.caps {
+  padding: 4rem 0 1rem;
+}
+.caps h2,
+.docs h2 {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 2rem;
+}
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2.4rem 3rem;
+}
+.cap h3 {
+  font-size: 1.05rem;
+  margin: 0 0 0.15rem;
+  letter-spacing: -0.01em;
+}
+/* The command that delivers this capability. A real anchor, not a tally: the
+ * reader can go straight to it. */
+.cap .cmd {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--orange-ink);
+  margin: 0 0 0.7rem;
+}
+.cap p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.96rem;
+  line-height: 1.58;
+}
+
+/* --- Landing: the sixty-second block ------------------------------------ */
+
+.quickstart {
+  padding: 4rem 0;
+}
+.quickstart .wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+  gap: 3rem;
+  align-items: start;
+}
+.quickstart .lead h2 {
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.8rem;
+}
+.quickstart .lead p {
+  margin: 0 0 1rem;
+  color: var(--ink-soft);
+  font-size: 0.98rem;
+}
+.terminal {
+  background: var(--ink);
+  color: #f4efe6;
+  border-radius: 5px;
+  padding: 1.3rem 1.5rem;
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  line-height: 1.75;
+  overflow-x: auto;
+}
+.terminal .c {
+  color: #d8b48a;
+}
+.terminal .p {
+  color: #ff9d5c;
+  user-select: none;
+}
+.terminal .o {
+  color: #9aa0a6;
+}
+
+/* --- Landing: documentation index --------------------------------------- */
+
+.docs {
+  padding: 3rem 0 1rem;
+  border-top: 1px solid var(--rule);
+}
+.doc-group {
+  margin-bottom: 2.8rem;
+}
+.doc-group > h3 {
+  font-size: 0.92rem;
+  letter-spacing: 0.01em;
+  color: var(--orange-ink);
+  font-family: var(--mono);
+  margin: 0 0 1.1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+.doc-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem 2.5rem;
+}
+.doc-item {
+  display: block;
+  padding: 0.85rem 0;
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule);
+}
+.doc-item:last-child {
+  border-bottom: 0;
+}
+.doc-item .t {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.98rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.doc-item .t::after {
+  content: "\2192";
+  color: var(--ink-faint);
+  transition: transform 0.12s ease;
+}
+.doc-item:hover .t {
+  color: var(--orange);
+}
+.doc-item:hover .t::after {
+  color: var(--orange);
+  transform: translateX(3px);
+}
+.doc-item .d {
+  margin: 0.25rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+/* --- Doc pages ---------------------------------------------------------- */
+
+.docpage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+.docpage.has-toc {
+  grid-template-columns: 15rem minmax(0, 1fr);
+  gap: 3.5rem;
+}
+.toc {
+  position: sticky;
+  top: 2rem;
+  align-self: start;
+  padding-top: 3rem;
+  font-size: 0.87rem;
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+}
+.toc .label {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 0.9rem;
+}
+.toc a {
+  display: block;
+  padding: 0.28rem 0;
+  color: var(--ink-soft);
+  text-decoration: none;
+  line-height: 1.4;
+  border-left: 2px solid transparent;
+  padding-left: 0.8rem;
+  margin-left: -0.8rem;
+}
+.toc a:hover {
+  color: var(--orange);
+  border-left-color: var(--orange);
+}
+
+.doc {
+  padding: 3rem 0 1rem;
+  min-width: 0;
+}
+.doc .crumb {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  margin-bottom: 1.6rem;
+}
+.doc .crumb a {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+.doc .crumb a:hover {
+  color: var(--orange);
+}
+
+.prose {
+  max-width: var(--measure);
+}
+.prose.wide {
+  max-width: 54rem;
+}
+.prose h1 {
+  font-size: clamp(1.9rem, 3.5vw, 2.5rem);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  margin: 0 0 1.8rem;
+  font-weight: 680;
+}
+.prose h2 {
+  font-size: 1.4rem;
+  letter-spacing: -0.01em;
+  margin: 2.8rem 0 1rem;
+  padding-top: 0.4rem;
+  scroll-margin-top: 1.5rem;
+}
+.prose h3 {
+  font-size: 1.12rem;
+  margin: 2rem 0 0.7rem;
+  scroll-margin-top: 1.5rem;
+}
+.prose h4 {
+  font-size: 1rem;
+  margin: 1.6rem 0 0.5rem;
+  color: var(--ink-soft);
+}
+.prose p,
+.prose li {
+  line-height: 1.68;
+}
+.prose a {
+  overflow-wrap: break-word;
+}
+.prose strong {
+  font-weight: 660;
+}
+
+.prose pre {
+  background: var(--ink);
+  color: #f4efe6;
+  padding: 1.1rem 1.3rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  margin: 1.4rem 0;
+}
+.prose :not(pre) > code {
+  background: var(--code-bg);
+  padding: 0.12em 0.38em;
+  border-radius: 3px;
+  font-size: 0.88em;
+  overflow-wrap: break-word;
+}
+
+.prose blockquote {
+  margin: 1.4rem 0;
+  padding: 0.2rem 0 0.2rem 1.2rem;
+  border-left: 3px solid var(--rule-strong);
+  color: var(--ink-soft);
+}
+/* A TODO gap in a generated document, carried over from the report styling. */
+.prose blockquote:has(strong:first-child) {
+  border-left-color: var(--orange);
+  background: var(--orange-wash);
+  padding: 0.8rem 1.2rem;
+  border-radius: 0 3px 3px 0;
+}
+
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2.6rem 0;
+}
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.6rem 0;
+  font-size: 0.9rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose thead th {
+  text-align: left;
+  border-bottom: 2px solid var(--rule-strong);
+  padding: 0.55rem 0.9rem 0.55rem 0;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+  vertical-align: bottom;
+}
+.prose tbody td {
+  border-bottom: 1px solid var(--rule);
+  padding: 0.6rem 0.9rem 0.6rem 0;
+  vertical-align: top;
+  line-height: 1.5;
+}
+.prose tbody tr:hover td {
+  background: var(--paper-raised);
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.3rem;
+}
+.prose li {
+  margin: 0.3rem 0;
+}
+.prose li::marker {
+  color: var(--ink-faint);
+}
+/* Task-list items the renderer emits as checkboxes. */
+.prose li input[type="checkbox"] {
+  margin-right: 0.4rem;
+  accent-color: var(--orange);
+}
+
+/* --- Responsive --------------------------------------------------------- */
+
+@media (max-width: 60rem) {
+  .hero .wrap,
+  .quickstart .wrap {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2.5rem;
+  }
+  .cap-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
+  .doc-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .docpage.has-toc {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .toc {
+    position: static;
+    max-height: none;
+    padding-top: 2rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 1rem;
+  }
+}
+
+@media (max-width: 40rem) {
+  body {
+    font-size: 16px;
+  }
+  .masthead nav {
+    gap: 1rem;
+    font-size: 0.82rem;
+  }
+  .hero {
+    padding: 3rem 0 2.5rem;
+  }
+}

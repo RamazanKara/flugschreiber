@@ -1,0 +1,137 @@
+{{template "head" (dict "Title" "Flugschreiber: tamper-evident audit logs for self-hosted LLMs" "Repo" .Repo)}}
+
+<main id="main">
+
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <p class="eyebrow">EVIDENCE LAYER FOR SELF-HOSTED LLMS</p>
+      <h1>Prove what your AI did, and that nobody changed the record.</h1>
+      <p class="lede">A reverse proxy in front of any OpenAI-compatible endpoint. It
+      records every model interaction to an append-only, hash-chained, signed log,
+      and generates the EU AI Act documentation from the traffic it observed. One
+      base URL change, no application code.</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#quickstart">Sixty-second start</a>
+        <a class="btn btn-ghost" href="{{.Repo}}">View on GitHub</a>
+      </div>
+    </div>
+    <div class="demo-frame">
+      <div class="chrome"><span></span><span></span><span></span><b>serve &middot; call &middot; verify &middot; tamper &middot; report</b></div>
+      <img src="media/demo.gif" width="842" height="612"
+           alt="A terminal recording: starting the proxy, making a model call, verifying the chain, tampering with a record, and watching verification fail.">
+    </div>
+  </div>
+</section>
+
+<section class="claim">
+  <div class="wrap">
+    <p>Somebody will ask what evidence you have of what your AI did last quarter.
+    Application logs were never designed to answer that.</p>
+    <p class="after">Flugschreiber records the interaction, chains it so a change
+    is detectable, signs it so a rewrite needs the key, and hands you documentation
+    built from what actually happened.</p>
+  </div>
+</section>
+
+<section class="caps">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <div class="cap-grid">
+      <div class="cap">
+        <h3>Records everything</h3>
+        <p class="cmd">serve</p>
+        <p>Chat, completions, embeddings and the Responses API, streamed or not.
+        Tool calls and their results. Three content modes, from a digest of every
+        request to full transcripts, with encryption at rest.</p>
+      </div>
+      <div class="cap">
+        <h3>Proves it is intact</h3>
+        <p class="cmd">verify</p>
+        <p>Every record carries the hash of the one before it. Ed25519 checkpoints,
+        chained to each other, mean a rewrite needs the signing key and a deletion
+        is detectable. <code>verify</code> reads only the files, on any machine.</p>
+      </div>
+      <div class="cap">
+        <h3>Keeps the key elsewhere</h3>
+        <p class="cmd">keys &middot; --signer</p>
+        <p>An external signer holds the key on a smartcard or an HSM. RFC 3161
+        anchoring turns a checkpoint's time into a third party's claim. Key rotation
+        keeps every retired key, so old checkpoints verify forever.</p>
+      </div>
+      <div class="cap">
+        <h3>Answers erasure requests</h3>
+        <p class="cmd">erase</p>
+        <p>Stored content is sealed under a per-session key held outside the chain.
+        Erasing destroys the key, so the content goes and the chain stays whole. The
+        log records what was erased and when.</p>
+      </div>
+      <div class="cap">
+        <h3>Generates the documents</h3>
+        <p class="cmd">report</p>
+        <p>The Annex IV technical documentation skeleton and the Article 50
+        transparency pack, in English and German, pre-filled from observed traffic
+        as Markdown, HTML and PDF.</p>
+      </div>
+      <div class="cap">
+        <h3>Runs where you run</h3>
+        <p class="cmd">helm &middot; docker</p>
+        <p>A 20&nbsp;MB distroless binary with zero dependencies. A Helm chart with a
+        network policy and scheduled verification. No SaaS, no dashboard to host, no
+        telemetry of any kind.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="quickstart" id="quickstart">
+  <div class="wrap">
+    <div class="lead">
+      <h2>Sixty seconds</h2>
+      <p>Point a container at your model server, send a request, and verify the
+      chain. No GPU and no network needed: the built-in mock stands in for a real
+      upstream.</p>
+      <p><a href="kubernetes.html">The Kubernetes guide</a> covers the chart, the
+      sidecar mode and the network policy that makes the proxy unavoidable.</p>
+    </div>
+    <div class="terminal">
+<span class="p">$ </span><span class="c">docker run</span> -d --name flugschreiber -p 8080:8080 \
+    -v fs-evidence:/var/lib/flugschreiber \
+    ghcr.io/ramazankara/flugschreiber \
+    serve --mock-upstream
+<span class="o"></span>
+<span class="p">$ </span><span class="c">curl</span> localhost:8080/v1/chat/completions \
+    -d '{"model":"m","messages":[{"role":"user","content":"hi"}]}'
+<span class="o"></span>
+<span class="p">$ </span><span class="c">docker exec</span> flugschreiber \
+    flugschreiber verify --dir /var/lib/flugschreiber
+<span class="o">hash chain intact</span>
+<span class="o">  records     1</span>
+<span class="o">  checkpoints 1, 1 verified against signature and chain</span>
+<span class="o">  attestation attested</span>
+    </div>
+  </div>
+</section>
+
+<section class="docs">
+  <div class="wrap">
+    <h2>Documentation</h2>
+    {{range .Groups}}
+    <div class="doc-group">
+      <h3>{{.Name}}</h3>
+      <div class="doc-list">
+        {{range .Pages}}
+        <a class="doc-item" href="{{.Slug}}.html">
+          <span class="t">{{.Title}}</span>
+          <p class="d">{{.Blurb}}</p>
+        </a>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+</section>
+
+</main>
+
+{{template "foot" (dict "Version" .Version "Repo" .Repo)}}
