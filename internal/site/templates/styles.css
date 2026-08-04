@@ -1,11 +1,11 @@
 /* Flugschreiber site.
  *
  * Direction: technical-editorial. The product is a command-line tool that
- * speaks in fixed-width output, so its own voice is a monospace. The page is
- * warm paper and near-black ink, the way a printed record reads, with a single
- * accent: international orange, the paint colour of the instrument the product
- * is named after. No gradients, no web fonts, no colour beyond ink, paper and
- * that one orange. Everything is a system font, so the page owes nothing to a
+ * speaks in fixed-width output, so its own voice is a monospace. The palette is
+ * the colour language of aviation safety: international orange, the paint of the
+ * instrument the product is named after, on the cool charcoal and grey of an
+ * instrument panel. That is the one accent, and there is no colour beyond it,
+ * ink and ground. Everything is a system font, so the page owes nothing to a
  * server nobody promised to keep running, which is the argument the product
  * itself makes.
  */
@@ -13,20 +13,21 @@
 :root {
   color-scheme: light dark;
 
-  --ink: #17140f;
-  --ink-soft: #4a453d;
-  --ink-faint: #7c766b;
-  --paper: #f7f4ee;
-  --paper-raised: #fffdf8;
-  --rule: #e2ddd2;
-  --rule-strong: #cbc4b5;
+  --ink: #14181d;
+  --ink-soft: #3e454e;
+  --ink-faint: #6a7079;
+  --paper: #eaedf1;
+  --paper-raised: #f7f9fb;
+  --rule: #d3d8de;
+  --rule-strong: #b7bec7;
 
-  /* International orange, the flight-recorder paint. The single accent. */
+  /* International orange, the flight-recorder paint, on a cool ground: the
+   * orange-on-charcoal of aviation and safety signage. The single accent. */
   --orange: #d64500;
   --orange-ink: #b23a00;
   --orange-wash: #fbeee6;
 
-  --code-bg: #f0ece3;
+  --code-bg: #e3e7ec;
 
   --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono",
     "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
@@ -39,17 +40,17 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: #ece7dc;
-    --ink-soft: #b7b0a2;
-    --ink-faint: #857f72;
-    --paper: #14120e;
-    --paper-raised: #1c1a15;
-    --rule: #2c2921;
-    --rule-strong: #3d392f;
+    --ink: #e6eaf0;
+    --ink-soft: #aeb6c0;
+    --ink-faint: #727a85;
+    --paper: #14171c;
+    --paper-raised: #1c2027;
+    --rule: #2a2f37;
+    --rule-strong: #3a414b;
     --orange: #ff6a2b;
     --orange-ink: #ff8552;
     --orange-wash: #241610;
-    --code-bg: #201d17;
+    --code-bg: #1a1e25;
   }
 }
 
@@ -57,35 +58,36 @@
 /* The viewer toggle stamps data-theme on the root; it must beat the media
  * query in both directions, so the tokens are repeated here. */
 :root[data-theme="dark"] {
-    --ink: #ece7dc;
-    --ink-soft: #b7b0a2;
-    --ink-faint: #857f72;
-    --paper: #14120e;
-    --paper-raised: #1c1a15;
-    --rule: #2c2921;
-    --rule-strong: #3d392f;
+    --ink: #e6eaf0;
+    --ink-soft: #aeb6c0;
+    --ink-faint: #727a85;
+    --paper: #14171c;
+    --paper-raised: #1c2027;
+    --rule: #2a2f37;
+    --rule-strong: #3a414b;
     --orange: #ff6a2b;
     --orange-ink: #ff8552;
     --orange-wash: #241610;
-    --code-bg: #201d17;
+    --code-bg: #1a1e25;
 }
 :root[data-theme="light"] {
   color-scheme: light dark;
 
-  --ink: #17140f;
-  --ink-soft: #4a453d;
-  --ink-faint: #7c766b;
-  --paper: #f7f4ee;
-  --paper-raised: #fffdf8;
-  --rule: #e2ddd2;
-  --rule-strong: #cbc4b5;
+  --ink: #14181d;
+  --ink-soft: #3e454e;
+  --ink-faint: #6a7079;
+  --paper: #eaedf1;
+  --paper-raised: #f7f9fb;
+  --rule: #d3d8de;
+  --rule-strong: #b7bec7;
 
-  /* International orange, the flight-recorder paint. The single accent. */
+  /* International orange, the flight-recorder paint, on a cool ground: the
+   * orange-on-charcoal of aviation and safety signage. The single accent. */
   --orange: #d64500;
   --orange-ink: #b23a00;
   --orange-wash: #fbeee6;
 
-  --code-bg: #f0ece3;
+  --code-bg: #e3e7ec;
 
   --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono",
     "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
@@ -259,6 +261,7 @@ footer.site .tagline {
   background: var(--orange);
 }
 .hero h1 {
+  text-wrap: balance;
   font-size: clamp(2.1rem, 4.6vw, 3.1rem);
   line-height: 1.08;
   letter-spacing: -0.02em;
@@ -348,6 +351,7 @@ footer.site .tagline {
   max-width: var(--measure);
 }
 .claim p {
+  text-wrap: balance;
   font-size: 1.32rem;
   line-height: 1.5;
   letter-spacing: -0.01em;
@@ -571,6 +575,7 @@ footer.site .tagline {
   max-width: 54rem;
 }
 .prose h1 {
+  text-wrap: balance;
   font-size: clamp(1.9rem, 3.5vw, 2.5rem);
   line-height: 1.12;
   letter-spacing: -0.02em;
