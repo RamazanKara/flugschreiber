@@ -4,7 +4,7 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
-## Unreleased
+## v0.6.0, 2026-08-04
 
 - `docs/VERIFYING.md` specifies the whole log format and ships a reference
   verifier you can reimplement in any language; a test runs it against the
