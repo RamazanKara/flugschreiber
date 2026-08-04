@@ -20,6 +20,17 @@ import (
 // traffic went somewhere else.
 const DefaultGapThreshold = time.Hour
 
+// LifecycleEvent is one recorded change to the evidence itself, surfaced for a
+// reader rather than counted.
+type LifecycleEvent struct {
+	Seq       uint64 `json:"seq"`
+	Timestamp string `json:"timestamp"`
+	Type      string `json:"event_type"`
+	Actor     string `json:"actor,omitempty"`
+	Severity  string `json:"severity,omitempty"`
+	Note      string `json:"note,omitempty"`
+}
+
 // Coverage is what a log says about its own completeness.
 type Coverage struct {
 	Dir      string `json:"dir"`
@@ -28,11 +39,17 @@ type Coverage struct {
 	Last     string `json:"last_record,omitempty"`
 	Duration string `json:"observed_duration,omitempty"`
 
-	ByEventType   []Tally `json:"by_event_type,omitempty"`
-	ByContentMode []Tally `json:"by_content_mode,omitempty"`
-	ByEndpoint    []Tally `json:"by_endpoint,omitempty"`
-	ByModel       []Tally `json:"by_model,omitempty"`
-	ByStatusClass []Tally `json:"by_status_class,omitempty"`
+	ByEventType []Tally `json:"by_event_type,omitempty"`
+
+	// Lifecycle lists the events that change what the log holds or attests to:
+	// erasures, key rotations, repairs, salt boundaries and any other
+	// system_event or config_change. They are rare and consequential, and an
+	// auditor should see them rather than have them averaged into a type tally.
+	Lifecycle     []LifecycleEvent `json:"lifecycle,omitempty"`
+	ByContentMode []Tally          `json:"by_content_mode,omitempty"`
+	ByEndpoint    []Tally          `json:"by_endpoint,omitempty"`
+	ByModel       []Tally          `json:"by_model,omitempty"`
+	ByStatusClass []Tally          `json:"by_status_class,omitempty"`
 
 	Inference int `json:"inference_records"`
 	Streamed  int `json:"streamed_records"`
@@ -142,6 +159,18 @@ func Analyse(dir string, gapThreshold time.Duration) (*Coverage, error) {
 		}
 		if ev.ClientHash != "" {
 			clients[ev.ClientHash] = struct{}{}
+		}
+
+		switch ev.EventType {
+		case evidence.EventSystemEvent, evidence.EventConfigChange, evidence.EventIncident:
+			c.Lifecycle = append(c.Lifecycle, LifecycleEvent{
+				Seq:       e.Record.Seq,
+				Timestamp: e.Record.Timestamp,
+				Type:      ev.EventType,
+				Actor:     ev.Actor,
+				Severity:  ev.Severity,
+				Note:      ev.Note,
+			})
 		}
 
 		if ev.EventType != evidence.EventInference {

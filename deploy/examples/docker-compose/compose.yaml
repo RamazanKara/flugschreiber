@@ -1,0 +1,42 @@
+# Flugschreiber in front of a model server, with Docker Compose.
+#
+# This records every call an application makes through the proxy. Point your
+# application at http://flugschreiber:8080 instead of the model server, change
+# nothing else, and the interactions land in a tamper-evident log on the
+# fs-evidence volume.
+#
+# The commented ollama service is a self-contained model server so this runs
+# with nothing external. Delete it and set config.upstream to your own vLLM,
+# Ollama or other OpenAI-compatible endpoint for a real deployment.
+
+services:
+  flugschreiber:
+    image: ghcr.io/ramazankara/flugschreiber:latest
+    command: ["serve", "--config", "/etc/flugschreiber/config.json"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - fs-evidence:/var/lib/flugschreiber
+      - ./config.json:/etc/flugschreiber/config.json:ro
+    # The evidence volume is the only path the proxy writes to, so the rest of
+    # the container can be read-only with every capability dropped.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - "no-new-privileges:true"
+    restart: unless-stopped
+    # depends_on: [ollama]   # uncomment with the ollama service below
+
+  # A model server so the example runs on its own. Replace with your real one.
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   volumes:
+  #     - ollama-models:/root/.ollama
+  #   # Pull a model once the container is up:
+  #   #   docker compose exec ollama ollama pull llama3.2
+
+volumes:
+  fs-evidence:
+  # ollama-models:

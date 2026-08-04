@@ -169,10 +169,13 @@ Flugschreiber observes the API boundary. Outside that boundary:
 - **Retrieval context**, unless it was injected into the prompt the proxy saw.
 - **Requests it forwards but does not classify.** Anything that is not a POST to
   a recognised endpoint is proxied through and not recorded. That includes
-  vLLM's `/score`, `/classify` and `/pooling`, `/v1/audio/transcriptions`, and
-  Ollama's native `/api/chat` and `/api/generate`. They reach the model server
-  and are not recorded. Check whether your applications use them before relying
-  on coverage figures.
+  vLLM's `/score`, `/classify` and `/pooling`, `/v1/audio/transcriptions` and
+  `/v1/images/generations`, Anthropic's `/v1/messages`, and Ollama's native
+  `/api/chat` and `/api/generate`. They reach the model server and are not
+  recorded. The recorded endpoints are chat, completions, embeddings and the
+  Responses API; `DECISIONS.md` D47 explains why images and `/v1/messages` are
+  out. Check whether your applications use the others before relying on coverage
+  figures.
 - **Traffic that does not pass through it.** Coverage is a deployment property.
   `flugschreiber coverage` reports what share of observed traffic was
   captured and in which mode, but it cannot report on traffic that bypassed the

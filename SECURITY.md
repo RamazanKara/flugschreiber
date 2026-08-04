@@ -186,13 +186,31 @@ content. Treat that access as you treat write access to the directory itself.
 - Builds are reproducible: `-trimpath`, pinned Go version, no cgo.
 - Release images are distroless static and published with an SBOM.
 - Release artifacts are signed with cosign (keyless, via GitHub OIDC).
+- Every release carries SLSA build provenance: an attestation, signed through
+  GitHub OIDC, of which workflow, commit and runner produced it. The binaries
+  are covered through their checksum file and the image through its digest.
 
-To verify a release image:
+To verify a release image's signature:
 
 ```bash
 cosign verify ghcr.io/ramazankara/flugschreiber:VERSION \
   --certificate-identity-regexp 'https://github.com/RamazanKara/flugschreiber/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+To verify its build provenance, which proves it was built by this repository's
+release workflow and not substituted:
+
+```bash
+gh attestation verify oci://ghcr.io/ramazankara/flugschreiber:VERSION \
+  --repo RamazanKara/flugschreiber
+```
+
+For a downloaded binary archive, verify the provenance of the checksum file it
+is listed in:
+
+```bash
+gh attestation verify sha256sums.txt --repo RamazanKara/flugschreiber
 ```
 
 ## Hardening checklist for operators

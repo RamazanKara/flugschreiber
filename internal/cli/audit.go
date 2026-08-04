@@ -24,8 +24,10 @@ func Coverage(args []string) error {
 Reports what is in an evidence log: how many records, at what content fidelity,
 for which models and endpoints, and how complete the metadata is.
 
-It also reports quiet stretches, which are the only signal the log itself can
-give that the proxy may not have been running.
+It surfaces the changes to the evidence itself, erasures, key rotations, repairs
+and salt boundaries, so an audit can account for each. It also reports quiet
+stretches, which are the only signal the log itself can give that the proxy may
+not have been running.
 
 It cannot report on traffic that never reached the proxy. Coverage of your
 system is a network property, not something this command can observe.
@@ -95,6 +97,26 @@ func printCoverage(c *audit.Coverage) {
 		completeness("caller identified", c.WithClient, c.Inference)
 		completeness("model name recorded", c.WithModelName, c.Inference)
 		fmt.Printf("    %-26s %d streamed, %d failed\n", "", c.Streamed, c.Failed)
+	}
+
+	if len(c.Lifecycle) > 0 {
+		fmt.Printf("\n  changes to the evidence itself (%d)\n\n", len(c.Lifecycle))
+		for _, l := range c.Lifecycle {
+			who := ""
+			if l.Actor != "" {
+				who = " by " + l.Actor
+			}
+			sev := ""
+			if l.Severity != "" {
+				sev = " [" + l.Severity + "]"
+			}
+			fmt.Printf("    seq %d  %s%s%s\n", l.Seq, l.Type, sev, who)
+			if l.Note != "" {
+				fmt.Printf("      %s\n", truncate(l.Note, 76))
+			}
+		}
+		fmt.Printf("\n  Erasures, rotations, repairs and salt changes are recorded here. An audit\n")
+		fmt.Printf("  should account for each one.\n")
 	}
 
 	if len(c.Gaps) > 0 {

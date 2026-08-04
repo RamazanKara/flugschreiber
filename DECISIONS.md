@@ -725,3 +725,31 @@ implementation, outside the compatibility promise. They hold wrapped key
 material, they are never exported or archived, and no third party reads them, so
 their layout may change with a one-way migration. Everything a third party does
 read is covered by the promise.
+
+## D47. The endpoints that are not recorded, and why
+
+Two endpoints come up often enough to state the position rather than leave it to
+be inferred.
+
+**Image generation (`/v1/images/generations`).** Not recorded. There is a real
+argument for it: its output is synthetic content, which is exactly what Article
+50(2) asks providers to mark, so an evidence log of it would have a clear
+purpose. What holds it back is the shape of the data. The output is an image,
+returned inline as base64 or as a URL to fetch, and the digest-over-wire-bytes
+model that makes the text endpoints cheap turns into either buffering megabytes
+per request or recording a digest of a URL whose contents can change. Neither is
+the clean guarantee the rest of the log provides, so the endpoint stays out until
+the recording model for it is designed rather than bolted on. The request is
+recorded when it passes through as an ordinary POST is not; it is proxied and not
+classified, and `coverage` and MAPPING.md say so.
+
+**Anthropic's Messages API (`/v1/messages`).** Not recorded, because the
+positioning is OpenAI-compatible and the request and response shapes differ
+enough that treating them as chat completions would mis-record them. It is the
+single most likely "why is this not supported" question, and the honest answer is
+that it is a deliberate scope line, not an oversight: adding it is a parser and a
+mapping, waiting on demand from somebody who runs it. Until then, traffic to it
+is proxied and not classified, the same as any other unrecognised POST.
+
+Both are named in MAPPING.md's list of what the proxy forwards but does not
+record, so an operator sees the boundary rather than discovering it.

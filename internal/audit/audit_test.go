@@ -346,3 +346,62 @@ func TestAnalyseEmptyDirectory(t *testing.T) {
 		t.Error("an empty directory should not report a verified chain")
 	}
 }
+
+// The changes to the evidence itself, erasures, rotations, repairs, salt
+// boundaries, are what an auditor most needs to see and what a per-type tally
+// would bury. Coverage surfaces them as a list.
+func TestCoverageSurfacesLifecycleEvents(t *testing.T) {
+	dir := t.TempDir()
+	store, err := evidence.Open(evidence.Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []*evidence.Event{
+		{EventType: evidence.EventInference, RequestID: "r-1", Endpoint: "/v1/chat/completions", Status: 200,
+			Content: &evidence.Content{Mode: evidence.ModeHash,
+				Input:  &evidence.Payload{SHA256: strings.Repeat("a", 64), Bytes: 1},
+				Output: &evidence.Payload{SHA256: strings.Repeat("b", 64), Bytes: 1}}},
+		{EventType: evidence.EventConfigChange, Note: "signing key rotated"},
+		{EventType: evidence.EventSystemEvent, Actor: "dpo@example.org", Note: "stored content erased for session s-1"},
+		{EventType: evidence.EventIncident, Severity: evidence.SeveritySerious, Actor: "alice@example.org",
+			RefRequestID: "r-1", Note: "wrongly denied claim"},
+	}
+	for _, e := range events {
+		if err := store.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := Analyse(dir, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Lifecycle) != 3 {
+		t.Fatalf("Lifecycle has %d events, want the rotation, the erasure and the incident", len(c.Lifecycle))
+	}
+	// The inference record is not a lifecycle event.
+	for _, l := range c.Lifecycle {
+		if l.Type == evidence.EventInference {
+			t.Error("an inference record was surfaced as a lifecycle event")
+		}
+	}
+	// The erasure carries who did it, and the incident carries its severity.
+	var sawActor, sawSeverity bool
+	for _, l := range c.Lifecycle {
+		if l.Actor == "dpo@example.org" {
+			sawActor = true
+		}
+		if l.Severity == evidence.SeveritySerious {
+			sawSeverity = true
+		}
+	}
+	if !sawActor {
+		t.Error("the erasure did not carry the actor who performed it")
+	}
+	if !sawSeverity {
+		t.Error("the incident did not carry its severity")
+	}
+}

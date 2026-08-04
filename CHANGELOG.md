@@ -4,6 +4,23 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
+## Unreleased
+
+- `docs/VERIFYING.md` specifies the whole log format and ships a reference
+  verifier you can reimplement in any language; a test runs it against the
+  frozen fixture so the published code cannot drift from the format.
+- `docs/BACKUP.md` is a backup and restore runbook, including the partial-restore
+  result that looks like tampering and is not.
+- Releases carry SLSA build provenance, over the binaries' checksum file and the
+  image digest, verifiable with `gh attestation verify`.
+- A Docker Compose example under `deploy/examples/docker-compose` is a complete
+  config-file walkthrough; a test keeps the shipped config valid against the
+  parser.
+- `coverage` surfaces the changes to the evidence itself: erasures, key
+  rotations, repairs and salt boundaries, each with who and when.
+- `DECISIONS.md` D47 states why image generation and Anthropic's Messages API
+  are not recorded, and MAPPING.md lists them among the forwarded endpoints.
+
 ## v0.5.0, 2026-07-25
 
 Hardening ahead of 1.0. The failure paths now hold to the same standard as the

@@ -1,0 +1,19 @@
+{
+  "listen": ":8080",
+  "upstream": "http://ollama:11434",
+  "data_dir": "/var/lib/flugschreiber",
+
+  "content_mode": "hash",
+  "retention_days": 180,
+
+  "metrics_enabled": true,
+
+  "deployment": {
+    "organisation": "Muster GmbH",
+    "system_name": "Support Assistant",
+    "purpose": "Answering customer support questions",
+    "contact": "ai-governance@muster.example",
+    "role": "deployer",
+    "environment": "production"
+  }
+}

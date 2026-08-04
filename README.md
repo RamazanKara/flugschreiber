@@ -264,6 +264,10 @@ The image is distroless static, 20 MB, with no shell and no package manager. It
 needs `--tmpfs /tmp` only so that `report` and `export` have somewhere to write;
 `serve` itself writes nothing outside the evidence volume.
 
+For a config-file setup with a model server alongside, the
+[Docker Compose example](deploy/examples/docker-compose) is a complete
+walkthrough from `up` to a verified log to an exported bundle.
+
 ## Configuration
 
 Flags beat environment variables, which beat the config file. Everything has a
@@ -331,6 +335,8 @@ critical path.
 - [docs/tamper-evident-llm-audit-logs-on-kubernetes.md](docs/tamper-evident-llm-audit-logs-on-kubernetes.md) is the Kubernetes guide
 - [MAPPING.md](MAPPING.md) maps every schema field to the provision it supports (Articles 12, 19, 26, 50, 73), with the scope of each
 - [docs/SCHEMA.md](docs/SCHEMA.md) is the log format and the compatibility policy
+- [docs/VERIFYING.md](docs/VERIFYING.md) is how to verify a log independently, in any language, with a reference implementation
+- [docs/BACKUP.md](docs/BACKUP.md) is what to back up and how to restore it
 - [docs/STABILITY.md](docs/STABILITY.md) is what the command line promises: which surfaces are frozen, and what the exit codes mean
 - [DECISIONS.md](DECISIONS.md) is why things are the way they are
 - [SECURITY.md](SECURITY.md) is the threat model and the trust boundaries

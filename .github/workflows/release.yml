@@ -14,6 +14,7 @@ permissions:
   contents: write
   packages: write
   id-token: write
+  attestations: write
 
 env:
   GO_VERSION: "1.25"
@@ -87,6 +88,14 @@ jobs:
             --output-certificate dist/sha256sums.txt.pem \
             dist/sha256sums.txt
 
+      # SLSA build provenance over the checksum file, which covers every archive
+      # it lists by hash. This proves which workflow, commit and runner produced
+      # the release, verifiable with `gh attestation verify`.
+      - name: Attest the binaries' provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/sha256sums.txt
+
       - name: Package the Helm chart
         uses: azure/setup-helm@v4
         with:
@@ -155,6 +164,13 @@ jobs:
       - run: cosign sign --yes "${IMAGE}@${DIGEST}"
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
+
+      - name: Attest the image's provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
 
       - name: Image SBOM
         uses: anchore/sbom-action@v0
