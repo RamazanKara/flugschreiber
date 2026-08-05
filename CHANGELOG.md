@@ -4,7 +4,7 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
-## Unreleased
+## v0.7.0, 2026-08-05
 
 - Every reading command's `--dir` falls back to `FLUGSCHREIBER_DATA_DIR`, the
   variable `serve` already reads, so a container or a shell profile can name
