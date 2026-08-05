@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -54,7 +53,7 @@ Flags:
 	}
 
 	var (
-		dir      = fs.String("dir", "", "evidence directory (required)")
+		dir      = fs.String("dir", "", "evidence directory (or FLUGSCHREIBER_DATA_DIR)")
 		minDays  = fs.Int("min-days", config.RetentionFloorDays, "minimum retention in days")
 		maxBytes = fs.Int64("max-bytes", 0,
 			"size cap in bytes, reported and never enforced past the retention floor (0 disables it)")
@@ -68,9 +67,8 @@ Flags:
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dir == "" {
-		fs.Usage()
-		return errors.New("retention: --dir is required")
+	if err := resolveDir(fs, "retention", dir); err != nil {
+		return err
 	}
 	if *hold != "" && *releaseHold {
 		return errors.New("retention: --hold and --release-hold are mutually exclusive")
@@ -370,10 +368,4 @@ func shortHex(h string) string {
 		return h
 	}
 	return h[:12]
-}
-
-func emitJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
 }

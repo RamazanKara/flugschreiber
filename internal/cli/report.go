@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -44,7 +43,7 @@ Flags:
 	}
 
 	var (
-		dir        = fs.String("dir", "", "evidence directory to read (required)")
+		dir        = fs.String("dir", "", "evidence directory to read (or FLUGSCHREIBER_DATA_DIR)")
 		out        = fs.String("out", "reports", "directory to write the artifacts into")
 		configPath = fs.String("config", "", "JSON config file to read deployment metadata from")
 		org        = fs.String("organisation", "", "organisation name")
@@ -62,9 +61,8 @@ Flags:
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dir == "" {
-		fs.Usage()
-		return errors.New("report: --dir is required")
+	if err := resolveDir(fs, "report", dir); err != nil {
+		return err
 	}
 	if !report.ValidLang(*lang) {
 		return fmt.Errorf("report: --lang %q must be en, de, or both", *lang)

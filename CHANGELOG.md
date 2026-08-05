@@ -4,6 +4,22 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
+## Unreleased
+
+- Every reading command's `--dir` falls back to `FLUGSCHREIBER_DATA_DIR`, the
+  variable `serve` already reads, so a container or a shell profile can name
+  the evidence directory once for the whole toolchain. The flag still wins.
+- `inspect` accepts `--request-id` and `erase` accepts `--request`, each as an
+  alias of the other's spelling, so the two commands agree on how a request is
+  named.
+- An unrecognised command suggests the nearest real one, and the top-level help
+  groups the commands by task: record, check, hand over, maintain.
+- The archive verification engine moved from the command layer into its own
+  package, `internal/archivecheck`, the one place granted both sides: evidence
+  for what ought to exist, archive for what does. The command, its flags, its
+  output and its exit codes are unchanged, and the same tests that covered it
+  before cover it now.
+
 ## v0.6.0, 2026-08-04
 
 - `docs/VERIFYING.md` specifies the whole log format and ships a reference

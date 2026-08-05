@@ -95,16 +95,15 @@ Flags:
 	}
 
 	var (
-		dir        = fs.String("dir", "", "evidence directory (required)")
+		dir        = fs.String("dir", "", "evidence directory (or FLUGSCHREIBER_DATA_DIR)")
 		configPath = fs.String("config", "", "JSON config file, read to report how signing is configured")
 		asJSON     = fs.Bool("json", false, "emit the result as JSON")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dir == "" {
-		fs.Usage()
-		return errors.New("keys list: --dir is required")
+	if err := resolveDir(fs, "keys list", dir); err != nil {
+		return err
 	}
 	cfg, err := commandConfig(*configPath)
 	if err != nil {
@@ -198,16 +197,15 @@ Flags:
 	}
 
 	var (
-		dir        = fs.String("dir", "", "evidence directory (required)")
+		dir        = fs.String("dir", "", "evidence directory (or FLUGSCHREIBER_DATA_DIR)")
 		configPath = fs.String("config", "", "JSON config file, read to refuse a rotation that would change nothing")
 		asJSON     = fs.Bool("json", false, "emit the result as JSON")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dir == "" {
-		fs.Usage()
-		return errors.New("keys rotate: --dir is required")
+	if err := resolveDir(fs, "keys rotate", dir); err != nil {
+		return err
 	}
 	cfg, err := commandConfig(*configPath)
 	if err != nil {
@@ -296,24 +294,6 @@ func noKeyExplanation(cfg config.Config) string {
 	}
 }
 
-// commandConfig assembles the configuration a read-only command needs: the
-// file when one is named, then the environment. It is deliberately not
-// validated: a command that reads an evidence directory has no upstream and no
-// listen address, and refusing to list a key because no model server is
-// configured would be absurd.
-func commandConfig(path string) (config.Config, error) {
-	cfg := config.Default()
-	if path != "" {
-		if err := cfg.LoadFile(path); err != nil {
-			return cfg, err
-		}
-	}
-	if err := cfg.ApplyEnv(); err != nil {
-		return cfg, err
-	}
-	return cfg, nil
-}
-
 // keysRetire files a public key under keys/ so its checkpoints stay verifiable.
 func keysRetire(args []string) error {
 	fs := flag.NewFlagSet("keys retire", flag.ExitOnError)
@@ -339,16 +319,19 @@ Flags:
 		fs.PrintDefaults()
 	}
 	var (
-		dir    = fs.String("dir", "", "evidence directory (required)")
+		dir    = fs.String("dir", "", "evidence directory (or FLUGSCHREIBER_DATA_DIR)")
 		key    = fs.String("key", "", "PEM public key to retire (required)")
 		asJSON = fs.Bool("json", false, "emit the result as JSON")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dir == "" || *key == "" {
+	if err := resolveDir(fs, "keys retire", dir); err != nil {
+		return err
+	}
+	if *key == "" {
 		fs.Usage()
-		return errors.New("keys retire: --dir and --key are required")
+		return errors.New("keys retire: --key is required")
 	}
 
 	res, err := evidence.RetirePublicKey(*dir, *key)

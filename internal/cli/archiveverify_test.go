@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/RamazanKara/flugschreiber/internal/archive"
+	"github.com/RamazanKara/flugschreiber/internal/archivecheck"
 	"github.com/RamazanKara/flugschreiber/internal/evidence"
 )
 
@@ -137,10 +138,10 @@ func sealedSegments(t *testing.T, dir string) []string {
 	return names
 }
 
-func archiveVerifyJSON(t *testing.T, args ...string) (int, archiveVerifyResult) {
+func archiveVerifyJSON(t *testing.T, args ...string) (int, archivecheck.VerifyResult) {
 	t.Helper()
 	code, out := runCLI(t, append([]string{"archive-verify"}, append(args, "--json")...)...)
-	var res archiveVerifyResult
+	var res archivecheck.VerifyResult
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("archive-verify --json is not JSON: %v\n%s", err, out)
 	}
@@ -165,11 +166,11 @@ func TestArchiveVerifyAcceptsACompleteArchive(t *testing.T) {
 			archived[o.Key] = o.Status
 		}
 		for _, name := range sealedSegments(t, dir) {
-			if archived[name] != objectPresent {
+			if archived[name] != archivecheck.StatusPresent {
 				t.Errorf("sealed segment %s was not checked: %+v", name, res.Objects)
 			}
 		}
-		if archived[evidence.PublicKeyFile] != objectPresent {
+		if archived[evidence.PublicKeyFile] != archivecheck.StatusPresent {
 			t.Errorf("the public key was not checked: %+v", res.Objects)
 		}
 		if res.CheckpointSnapshots == 0 {
@@ -278,7 +279,7 @@ func TestArchiveVerifyChecksTheSnapshotOfTheOpenSegment(t *testing.T) {
 	}
 	var checked bool
 	for _, o := range res.Objects {
-		if o.Kind != kindOpenSegment {
+		if o.Kind != archivecheck.KindOpenSegment {
 			continue
 		}
 		checked = true
@@ -344,9 +345,9 @@ func TestArchiveVerifyChecksTheKeysARotationRetired(t *testing.T) {
 	}
 	var checked bool
 	for _, o := range res.Objects {
-		if o.Kind == kindRetiredKey && o.Key == retired[0] {
+		if o.Kind == archivecheck.KindRetiredKey && o.Key == retired[0] {
 			checked = true
-			if o.Status != objectPresent {
+			if o.Status != archivecheck.StatusPresent {
 				t.Errorf("the archived retired key is reported as %q: %s", o.Status, o.Detail)
 			}
 		}
@@ -470,11 +471,11 @@ func TestArchiveVerifyAccountsForARotatedPublicKey(t *testing.T) {
 	}
 	var found bool
 	for _, o := range res.Objects {
-		if o.Kind != kindPublicKey {
+		if o.Kind != archivecheck.KindPublicKey {
 			continue
 		}
 		found = true
-		if o.Status != objectPresent {
+		if o.Status != archivecheck.StatusPresent {
 			t.Fatalf("the archived public key is reported as %q: %s", o.Status, o.Detail)
 		}
 		if !strings.Contains(o.Detail, before.ID) {
@@ -521,9 +522,9 @@ func TestArchiveVerifyChecksSegmentsRetentionHasDeletedLocally(t *testing.T) {
 	}
 	var checked bool
 	for _, o := range res.Objects {
-		if o.Kind == kindPrunedSegment && o.Key == pruned {
+		if o.Kind == archivecheck.KindPrunedSegment && o.Key == pruned {
 			checked = true
-			if o.Status != objectPresent {
+			if o.Status != archivecheck.StatusPresent {
 				t.Errorf("the pruned segment is reported as %q", o.Status)
 			}
 		}

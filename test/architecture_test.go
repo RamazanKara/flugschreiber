@@ -33,13 +33,18 @@ var allowedImports = map[string][]string{
 	"internal/report":  {"internal/config", "internal/evidence"},
 	"internal/site":    {"internal/report"},
 
+	// The archive checker reads both sides on purpose: evidence for what ought
+	// to exist, archive for what does. It is the only package granted that
+	// pair, so neither foundation learns about the other through it.
+	"internal/archivecheck": {"internal/archive", "internal/evidence"},
+
 	// Composition layers.
 	"internal/proxy": {
 		"internal/config", "internal/content", "internal/evidence",
 		"internal/metrics", "internal/openai", "internal/version",
 	},
 	"internal/cli": {
-		"internal/archive", "internal/audit", "internal/config",
+		"internal/archive", "internal/archivecheck", "internal/audit", "internal/config",
 		"internal/custody", "internal/evidence", "internal/metrics",
 		"internal/mockupstream", "internal/pdf", "internal/proxy",
 		"internal/report", "internal/site", "internal/version",

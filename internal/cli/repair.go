@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"time"
@@ -51,7 +50,7 @@ Flags:
 	}
 
 	var (
-		dir     = fs.String("dir", "", "evidence directory (required)")
+		dir     = fs.String("dir", "", "evidence directory (or FLUGSCHREIBER_DATA_DIR)")
 		confirm = fs.Bool("confirm", false, "carry out the repair")
 		asJSON  = fs.Bool("json", false, "emit the result as JSON")
 		actor   = fs.String("actor", "", "who carried out the repair, recorded in the chain")
@@ -59,9 +58,8 @@ Flags:
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dir == "" {
-		fs.Usage()
-		return errors.New("repair: --dir is required")
+	if err := resolveDir(fs, "repair", dir); err != nil {
+		return err
 	}
 
 	torn, err := evidence.FindTornRecord(*dir)

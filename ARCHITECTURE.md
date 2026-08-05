@@ -43,7 +43,7 @@ internal/proxy ──▶ config, content, openai, evidence, metrics, version
 internal/report ──▶ config, evidence          internal/audit ──▶ content, evidence
 internal/config ──▶ content, evidence         internal/openai ──▶ evidence
 internal/content ──▶ evidence                 internal/custody ──▶ evidence
-internal/site ──▶ report
+internal/site ──▶ report                      internal/archivecheck ──▶ archive, evidence
 
 foundations, no internal imports at all:
   evidence   archive   metrics   pdf   mockupstream   version
@@ -77,7 +77,9 @@ and it makes one: everything a third party would need to verify the copy,
 including the anchors and every public key a checkpoint names, keyed so that a
 locked bucket never has to overwrite an object (D42). The dependency points from the thing that must always work to
 nothing at all, so a bug in SigV4 signing cannot be in the same import graph as
-chain verification.
+chain verification. The one place that has to know both sides, checking an
+archive against the directory it was made from, is `internal/archivecheck`,
+which sits above the two and is known to neither.
 
 **`cmd/*` contains no logic.** Both binaries are thin wrappers over
 `internal/cli`, which is why the proxy that recorded the evidence and the

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -36,7 +35,7 @@ Flags:
 	}
 
 	var (
-		dir    = fs.String("dir", "", "evidence directory to verify (required)")
+		dir    = fs.String("dir", "", "evidence directory to verify (or FLUGSCHREIBER_DATA_DIR)")
 		asJSON = fs.Bool("json", false, "emit the result as JSON")
 		quiet  = fs.Bool("quiet", false, "print nothing; report the result through the exit status only")
 
@@ -48,9 +47,8 @@ Flags:
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dir == "" {
-		fs.Usage()
-		return errors.New("verify: --dir is required")
+	if err := resolveDir(fs, "verify", dir); err != nil {
+		return err
 	}
 
 	res, err := evidence.Verify(*dir)

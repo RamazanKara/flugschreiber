@@ -63,7 +63,7 @@ Flags:
 	}
 
 	var (
-		dir       = fs.String("dir", "", "evidence directory (required)")
+		dir       = fs.String("dir", "", "evidence directory (or FLUGSCHREIBER_DATA_DIR)")
 		session   = fs.String("session", "", "session id whose content is to be destroyed")
 		requestID = fs.String("request-id", "", "request id whose content is to be destroyed")
 		requester = fs.String("requester", "", "who asked for the erasure, recorded in the chain")
@@ -72,12 +72,12 @@ Flags:
 		confirm   = fs.Bool("confirm", false, "carry out the erasure; it cannot be undone")
 		asJSON    = fs.Bool("json", false, "emit the result as JSON")
 	)
+	fs.StringVar(requestID, "request", "", "alias of --request-id")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dir == "" {
-		fs.Usage()
-		return errors.New("erase: --dir is required")
+	if err := resolveDir(fs, "erase", dir); err != nil {
+		return err
 	}
 	if *session == "" && *requestID == "" {
 		fs.Usage()

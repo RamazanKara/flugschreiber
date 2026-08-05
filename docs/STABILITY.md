@@ -70,6 +70,12 @@ Every setting has an environment variable, except the `upstreams` routing list,
 which is a structured list of objects and would need a syntax nobody could read
 back. It is config-file only.
 
+The reading commands follow the same layering for the one flag they all share:
+`--dir` names the evidence directory, and when the flag is absent it comes from
+`FLUGSCHREIBER_DATA_DIR`, the same variable `serve` reads for `--data-dir`. Set
+it once in a container or a shell profile and every command from `verify` to
+`erase` acts on the same directory.
+
 ## The Go packages
 
 Everything is under `internal/`, so nothing here is an importable API and none

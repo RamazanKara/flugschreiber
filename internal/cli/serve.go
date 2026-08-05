@@ -356,12 +356,6 @@ Every flag can also be set as an environment variable, for example
 	return nil
 }
 
-func setString(dst *string, v string) {
-	if v != "" {
-		*dst = v
-	}
-}
-
 func newLogger(level string) *slog.Logger {
 	var l slog.Level
 	if err := l.UnmarshalText([]byte(level)); err != nil {
