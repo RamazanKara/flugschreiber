@@ -9,52 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-var (
-	_ Archiver = (*Dir)(nil)
-	_ Getter   = (*Dir)(nil)
+const (
+	ContentTypeJSONL = "application/x-ndjson"
+	ContentTypeText  = "text/plain; charset=utf-8"
 )
-
-// recorder is a stand-in Archiver for testing the helpers that drive one.
-type recorder struct {
-	keys        []string
-	bodies      map[string][]byte
-	sizes       map[string]int64
-	contentType map[string]string
-	err         error
-}
-
-func newRecorder() *recorder {
-	return &recorder{
-		bodies:      map[string][]byte{},
-		sizes:       map[string]int64{},
-		contentType: map[string]string{},
-	}
-}
-
-func (r *recorder) Put(_ context.Context, key string, body io.Reader, size int64, contentType string) error {
-	if r.err != nil {
-		return r.err
-	}
-	b, err := io.ReadAll(body)
-	if err != nil {
-		return err
-	}
-	r.keys = append(r.keys, key)
-	r.bodies[key] = b
-	r.sizes[key] = size
-	r.contentType[key] = contentType
-	return nil
-}
-
-func (r *recorder) Exists(_ context.Context, key string) (bool, error) {
-	_, ok := r.bodies[key]
-	return ok, nil
-}
-
-func (r *recorder) Name() string { return "recorder" }
 
 func newTestDir(t *testing.T) *Dir {
 	t.Helper()
@@ -263,41 +223,6 @@ func TestDirPutStopsOnContextCancellation(t *testing.T) {
 	}
 }
 
-func TestPutFileSendsTheWholeFileAndItsSize(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "seg-00000002.jsonl")
-	body := strings.Repeat(`{"seq":1}`+"\n", 500)
-	if err := os.WriteFile(path, []byte(body), 0o640); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	rec := newRecorder()
-	if err := PutFile(context.Background(), rec, "evidence/seg-00000002.jsonl", path, ContentTypeJSONL); err != nil {
-		t.Fatalf("PutFile: %v", err)
-	}
-
-	key := "evidence/seg-00000002.jsonl"
-	if string(rec.bodies[key]) != body {
-		t.Error("PutFile did not upload the whole file")
-	}
-	if rec.sizes[key] != int64(len(body)) {
-		t.Errorf("size = %d, want %d", rec.sizes[key], len(body))
-	}
-	if rec.contentType[key] != ContentTypeJSONL {
-		t.Errorf("content type = %q, want %q", rec.contentType[key], ContentTypeJSONL)
-	}
-}
-
-func TestPutFileReportsAMissingFile(t *testing.T) {
-	err := PutFile(context.Background(), newRecorder(), "k", filepath.Join(t.TempDir(), "absent"), ContentTypeJSONL)
-	if err == nil {
-		t.Fatal("archiving a file that is not there must fail")
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("error should wrap os.ErrNotExist, got %v", err)
-	}
-}
-
 func TestCleanKeyAcceptsTheKeysThisProjectProduces(t *testing.T) {
 	tests := []string{
 		"seg-00000001.jsonl",
@@ -366,108 +291,6 @@ func TestJoinKeyToleratesPrefixSlashes(t *testing.T) {
 				t.Errorf("JoinKey(%q, %q) = %q, want %q", tt.prefix, tt.key, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestContentTypeForKnownEvidenceFiles(t *testing.T) {
-	tests := []struct {
-		name, want string
-	}{
-		{name: "seg-00000001.jsonl", want: ContentTypeJSONL},
-		{name: "checkpoints.jsonl", want: ContentTypeJSONL},
-		{name: "pruned.json", want: ContentTypeJSON},
-		{name: "public-key.pem", want: ContentTypePEM},
-		// A reason somebody typed, not a byte stream.
-		{name: "LEGAL_HOLD", want: ContentTypeText},
-		{name: "flugschreiber/prod/LEGAL_HOLD", want: ContentTypeText},
-		{name: "client-salt", want: "application/octet-stream"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ContentTypeFor(tt.name); got != tt.want {
-				t.Errorf("ContentTypeFor(%q) = %q, want %q", tt.name, got, tt.want)
-			}
-		})
-	}
-}
-
-// Put removes its own partial file on every path it controls, but SIGKILL and
-// a power loss are not among them. Without a sweep those accumulate in the
-// archive forever, so the archive slowly fills with files nobody can identify.
-func TestCleanTempRemovesPartialUploadsAKilledProcessLeftBehind(t *testing.T) {
-	d := newTestDir(t)
-	ctx := context.Background()
-
-	if err := d.Put(ctx, "2026/seg-00000001.jsonl", strings.NewReader("evidence"), 8, ContentTypeJSONL); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-
-	// What a process killed mid-Put leaves: the temporary file is on disk and
-	// the rename never happened.
-	stale := []string{
-		filepath.Join(d.Target(), tempPrefix+"123456"),
-		filepath.Join(d.Target(), "2026", tempPrefix+"789012"),
-	}
-	old := time.Now().Add(-2 * DefaultTempMaxAge)
-	for _, p := range stale {
-		if err := os.WriteFile(p, []byte("half a segment"), 0o640); err != nil {
-			t.Fatalf("WriteFile: %v", err)
-		}
-		if err := os.Chtimes(p, old, old); err != nil {
-			t.Fatalf("Chtimes: %v", err)
-		}
-	}
-
-	removed, err := d.CleanTemp(DefaultTempMaxAge)
-	if err != nil {
-		t.Fatalf("CleanTemp: %v", err)
-	}
-	if removed != len(stale) {
-		t.Errorf("CleanTemp removed %d files, want %d", removed, len(stale))
-	}
-	for _, p := range stale {
-		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s survived the sweep", p)
-		}
-	}
-	// The published object is not a partial upload and must be untouched.
-	if ok, err := d.Exists(ctx, "2026/seg-00000001.jsonl"); err != nil || !ok {
-		t.Errorf("CleanTemp removed a published object: %v, %v", ok, err)
-	}
-}
-
-// A sweep that ran while an upload was in flight would delete the file that
-// upload is writing, turning routine housekeeping into a failed archive.
-func TestCleanTempLeavesAnUploadThatIsStillRunning(t *testing.T) {
-	d := newTestDir(t)
-	fresh := filepath.Join(d.Target(), tempPrefix+"inflight")
-	if err := os.WriteFile(fresh, []byte("still being written"), 0o640); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	removed, err := d.CleanTemp(time.Hour)
-	if err != nil {
-		t.Fatalf("CleanTemp: %v", err)
-	}
-	if removed != 0 {
-		t.Errorf("CleanTemp removed %d files, want it to leave a fresh one alone", removed)
-	}
-	if _, err := os.Stat(fresh); err != nil {
-		t.Errorf("a partial upload written a moment ago was swept: %v", err)
-	}
-}
-
-func TestCleanTempOnAnArchiveWithNothingToSweep(t *testing.T) {
-	d := newTestDir(t)
-	if err := d.Put(context.Background(), "seg-00000001.jsonl", strings.NewReader("x"), 1, ContentTypeJSONL); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	removed, err := d.CleanTemp(0)
-	if err != nil {
-		t.Fatalf("CleanTemp: %v", err)
-	}
-	if removed != 0 {
-		t.Errorf("CleanTemp removed %d files from a clean archive", removed)
 	}
 }
 

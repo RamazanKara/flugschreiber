@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -154,7 +155,7 @@ Flags:
 		Dir:             *dir,
 		Keystore:        path,
 		KeystoreMissing: ks == nil,
-		SessionID:       firstNonEmpty(*session, scan.session),
+		SessionID:       scan.session,
 		RequestID:       *requestID,
 		Requester:       *requester,
 		Reason:          *reason,
@@ -314,7 +315,7 @@ func scanForErasure(dir, sessionID, requestID string) (*eraseScan, error) {
 			}
 			u.Records++
 			u.Last = e.Record.Timestamp
-			if ev.SessionID != "" && !listHas(u.Sessions, ev.SessionID) {
+			if ev.SessionID != "" && !slices.Contains(u.Sessions, ev.SessionID) {
 				u.Sessions = append(u.Sessions, ev.SessionID)
 			}
 			if selected {
@@ -400,22 +401,6 @@ func recordHoldsText(ev evidence.Event) bool {
 		}
 	}
 	return false
-}
-
-func listHas(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 func pendingKeyIDs(res *evidence.ContentErasureResult) []string {

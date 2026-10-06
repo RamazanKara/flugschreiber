@@ -324,9 +324,7 @@ func (s *Store) recordArchiveErr(err error) {
 	s.archiveErr.Store(&err)
 }
 
-// archiveContentType names the content type for an evidence file. The three
-// cases are duplicated from internal/archive rather than imported, because
-// importing it here would put an object store client behind every append.
+// archiveContentType names the content type for an evidence file.
 func archiveContentType(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".jsonl":

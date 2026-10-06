@@ -45,7 +45,6 @@ type Options struct {
 	Dir             string
 	SegmentMaxBytes int64
 	SyncInterval    time.Duration
-	QueueDepth      int
 
 	// Keys signs checkpoints. When nil, and no Signer is set either, the store
 	// writes no checkpoints, which is the hash-chain-only behaviour of M1.
@@ -187,9 +186,6 @@ func Open(opts Options) (*Store, error) {
 	if opts.SyncInterval <= 0 {
 		opts.SyncInterval = DefaultSyncInterval
 	}
-	if opts.QueueDepth <= 0 {
-		opts.QueueDepth = 4096
-	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = DefaultCheckpointInterval
 	}
@@ -215,7 +211,7 @@ func Open(opts Options) (*Store, error) {
 	s := &Store{
 		opts:     opts,
 		signer:   resolveSigner(opts),
-		queue:    make(chan *Event, opts.QueueDepth),
+		queue:    make(chan *Event, 4096),
 		done:     make(chan struct{}),
 		prevHash: GenesisHash,
 	}

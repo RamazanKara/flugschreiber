@@ -3,7 +3,6 @@ package pdf
 import (
 	"fmt"
 	"sort"
-	"strings"
 )
 
 // Style is a set of inline text attributes. Styles combine with bitwise or, so
@@ -279,17 +278,4 @@ func substitutions(subs map[rune]int) []Substitution {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Rune < out[j].Rune })
 	return out
-}
-
-// FormatSubstitutions renders subs as one operator-facing line, or the empty
-// string when nothing was substituted.
-func FormatSubstitutions(subs []Substitution) string {
-	if len(subs) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(subs))
-	for _, s := range subs {
-		parts = append(parts, s.String())
-	}
-	return strings.Join(parts, ", ")
 }

@@ -24,11 +24,6 @@ import (
 	"time"
 )
 
-var (
-	_ Archiver = (*Client)(nil)
-	_ Getter   = (*Client)(nil)
-)
-
 const (
 	testBucket    = "flugschreiber-evidence"
 	testRegion    = "eu-central-1"

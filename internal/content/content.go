@@ -99,18 +99,6 @@ func builtinNames() []string {
 	return names
 }
 
-// Names lists the active pattern labels, for reporting.
-func (r *Redactor) Names() []string {
-	if r == nil {
-		return nil
-	}
-	out := make([]string, 0, len(r.patterns))
-	for _, p := range r.patterns {
-		out = append(out, p.name)
-	}
-	return out
-}
-
 // Apply redacts s and returns the result with per-pattern hit counts.
 func (r *Redactor) Apply(s string) (string, map[string]int) {
 	if r == nil || len(r.patterns) == 0 || s == "" {
