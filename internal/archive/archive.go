@@ -14,82 +14,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
-	"time"
 	"unicode/utf8"
-)
-
-// Content types for the files an evidence directory holds. They are only
-// advisory: nothing verifies a bundle by its content type.
-const (
-	ContentTypeJSONL = "application/x-ndjson"
-	ContentTypePEM   = "application/x-pem-file"
-	ContentTypeJSON  = "application/json"
-	ContentTypeText  = "text/plain; charset=utf-8"
 )
 
 // MaxKeyBytes is the S3 key length limit. The filesystem backend enforces it
 // too, so that a layout which works locally also works against a bucket.
 const MaxKeyBytes = 1024
 
-// LegalHoldFile is the evidence file whose presence blocks retention deletion.
-// It carries a human-written reason and has no extension, so its content type
-// is named rather than guessed from a suffix.
-const LegalHoldFile = "LEGAL_HOLD"
-
-// Archiver stores one immutable object per key.
-//
-// Put must be safe to call again with the same key and the same bytes, because
-// that is what happens after a retry or a restart. It must not be used to
-// modify an object that already exists with different bytes; nothing in this
-// package tries to make that work, and against a locked bucket it cannot.
-type Archiver interface {
-	// Put writes size bytes read from body under key. A size below zero means
-	// the length is unknown, which the S3 backend resolves by measuring the
-	// body before it sends anything.
-	Put(ctx context.Context, key string, body io.Reader, size int64, contentType string) error
-
-	// Exists reports whether key is already present. An error means unknown,
-	// never absent: a bucket policy that denies HEAD but allows PUT is a
-	// normal configuration and must not be read as an empty archive.
-	Exists(ctx context.Context, key string) (bool, error)
-
-	// Name is the backend kind, "dir" or "s3". It is low cardinality on
-	// purpose, because it is the {backend} label on
-	// flugschreiber_archive_uploads_total.
-	//
-	// The {result} label on that counter is not this package's to define:
-	// internal/metrics owns it, as metrics.ArchiveSuccess, ArchiveFailure and
-	// ArchiveSkipped, whose values are "success", "failure" and "skipped".
-	// Callers pass those constants rather than a string, so that the two
-	// packages cannot drift into labelling the same event differently.
-	Name() string
-}
-
 // ErrNotFound reports that a key names no object in the archive. Get wraps it,
 // so a deep archive verification can tell a genuinely missing object from a
 // backend that is only unreachable: the first is a gap in the archive, the
 // second is a gap in the check, and the two call for opposite responses.
 var ErrNotFound = errors.New("archive: object not found")
-
-// Getter reads an archived object back.
-//
-// It is the read half archive verification needs, kept apart from Archiver so
-// that the write path a store depends on is not widened by a verification-only
-// method. Exists answers whether a key is present; Get returns its bytes, so a
-// deep check can compare them against the local copy. Both backends satisfy it,
-// and the evidence layer takes it structurally the same way it takes Archiver,
-// so the dependency still points away from the store.
-type Getter interface {
-	// Get opens the object stored under key for reading. The caller closes the
-	// returned reader. A key the archive does not hold returns an error
-	// satisfying errors.Is(err, ErrNotFound).
-	Get(ctx context.Context, key string) (io.ReadCloser, error)
-}
 
 // CleanKey validates an object key and returns it in canonical form.
 //
@@ -137,46 +76,6 @@ func JoinKey(prefix, key string) string {
 		return key
 	}
 	return prefix + "/" + key
-}
-
-// PutFile uploads the whole of the file at path under key. It is the call an
-// evidence store makes on rotation, and it exists here so that neither backend
-// has to be told how to open a file.
-func PutFile(ctx context.Context, a Archiver, key, filePath, contentType string) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("archive: open %s: %w", filePath, err)
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("archive: stat %s: %w", filePath, err)
-	}
-	return a.Put(ctx, key, f, info.Size(), contentType)
-}
-
-// ContentTypeFor guesses a content type from a file name, covering the file
-// kinds an evidence directory contains and defaulting to a byte stream.
-func ContentTypeFor(name string) string {
-	// The one evidence file whose name carries no extension. Serving a reason
-	// somebody typed as a byte stream makes a browser download it instead of
-	// showing it, which is the opposite of what a hold notice is for.
-	if path.Base(name) == LegalHoldFile {
-		return ContentTypeText
-	}
-	switch strings.ToLower(path.Ext(name)) {
-	case ".jsonl":
-		return ContentTypeJSONL
-	case ".json":
-		return ContentTypeJSON
-	case ".pem":
-		return ContentTypePEM
-	case ".txt", ".md":
-		return ContentTypeText
-	default:
-		return "application/octet-stream"
-	}
 }
 
 // Dir archives to a directory on a filesystem, which is the useful backend
@@ -231,7 +130,7 @@ func (d *Dir) Put(ctx context.Context, key string, body io.Reader, size int64, _
 		return fmt.Errorf("archive: create %s: %w", dir, err)
 	}
 
-	tmp, err := os.CreateTemp(dir, tempPrefix+"*")
+	tmp, err := os.CreateTemp(dir, ".upload-*")
 	if err != nil {
 		return fmt.Errorf("archive: create temporary file in %s: %w", dir, err)
 	}
@@ -266,70 +165,6 @@ func (d *Dir) Put(ctx context.Context, key string, body io.Reader, size int64, _
 	}
 	syncDir(dir)
 	return nil
-}
-
-// tempPrefix names a partial upload. The leading dot keeps it out of a shell
-// glob, and the fixed prefix is what CleanTemp recognises.
-const tempPrefix = ".upload-"
-
-// DefaultTempMaxAge is how long CleanTemp leaves a partial upload alone. It is
-// far longer than any single segment takes to write, so a file this old belongs
-// to a process that is no longer running.
-const DefaultTempMaxAge = time.Hour
-
-// CleanTemp removes the partial uploads left behind by a process that was
-// killed between creating the temporary file and renaming it into place. Put
-// removes its own on every path it can, but SIGKILL and a power loss are not
-// among them, so a long-lived archive needs a way to sweep them up. It returns
-// how many it removed.
-//
-// Only files last modified longer than maxAge ago are touched, so a sweep
-// cannot delete a file another process is still writing. A maxAge that is not
-// positive means DefaultTempMaxAge.
-//
-// A partial upload is never a published object: Put publishes by rename, so
-// nothing CleanTemp removes was ever part of the archive.
-func (d *Dir) CleanTemp(maxAge time.Duration) (int, error) {
-	if maxAge <= 0 {
-		maxAge = DefaultTempMaxAge
-	}
-	cutoff := time.Now().Add(-maxAge)
-
-	removed := 0
-	var problems []error
-	err := filepath.WalkDir(d.root, func(p string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			// A directory that cannot be read is reported, not fatal: the rest
-			// of the archive is still worth sweeping.
-			problems = append(problems, err)
-			return fs.SkipDir
-		}
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), tempPrefix) {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			// Gone between the walk and the stat, which is the outcome
-			// CleanTemp was after anyway.
-			return nil //nolint:nilerr // a vanished temp file is success here
-		}
-		if info.ModTime().After(cutoff) {
-			return nil
-		}
-		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-			problems = append(problems, err)
-			return nil
-		}
-		removed++
-		return nil
-	})
-	if err != nil {
-		problems = append(problems, err)
-	}
-	if len(problems) > 0 {
-		return removed, fmt.Errorf("archive: sweep partial uploads under %s: %w", d.root, errors.Join(problems...))
-	}
-	return removed, nil
 }
 
 // Exists reports whether key is present as a regular file.
