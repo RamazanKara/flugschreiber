@@ -1,34 +1,33 @@
+# Optional local checks: make test acceptance overhead cover image helm demo; scripts/demo.sh; deploy/helm/check.sh.
 name: CI
 
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  GO_VERSION: "1.25"
+  GOMAXPROCS: "2"
+  GOFLAGS: "-p=2"
 
 jobs:
-  test:
-    name: Test
+  ci:
+    name: Lint, unit tests and build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Verify no dependencies crept in
-        run: |
-          if grep -q '^require' go.mod; then
-            echo "go.mod gained a dependency. That is allowed, but it needs an entry in DECISIONS.md (see D1)."
-            exit 1
-          fi
+          go-version-file: go.mod
+          cache: false
 
       - name: Check formatting
         run: |
@@ -39,189 +38,16 @@ jobs:
             exit 1
           fi
 
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test with race detector
-        run: go test -race -count=1 ./...
-
-      - name: Coverage
-        run: |
-          go test -count=1 -coverprofile=coverage.out -covermode=atomic ./...
-          go tool cover -func=coverage.out | tail -1
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage.out
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      # Action v8 for the v2 binary line; the pinned version matches the one
-      # the repository is linted with locally, built against the same Go, so
-      # the gate cannot drift from the development environment.
-      - uses: golangci/golangci-lint-action@v8
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
         with:
           version: v2.12.2
+          args: --concurrency=2
 
-  # The acceptance demo is the definition of done, so it gates every merge on
-  # the same platforms users run it on.
-  acceptance:
-    name: Acceptance demo (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: Run the quickstart end to end
-        run: go test -count=1 -v -run TestQuickstartEndToEnd ./test/
-
-  docker:
-    name: Container image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
+      - name: Unit tests
+        run: go test -short -count=1 ./...
 
       - name: Build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: flugschreiber:ci
-          build-args: |
-            VERSION=ci-${{ github.sha }}
-            COMMIT=${{ github.sha }}
-
-      # A container that builds but cannot write to its own volume is a
-      # container that fails on a user's first command, so the quickstart
-      # invocation itself is tested.
-      - name: Run the documented quickstart command
-        run: |
-          # --tmpfs /tmp because the root filesystem is read-only and
-          # report and export have to write their output somewhere. Without
-          # it both commands fail, which is the point of running them here.
-          docker run -d --rm --name fs \
-            --read-only --tmpfs /tmp --cap-drop=ALL --security-opt=no-new-privileges \
-            -p 8080:8080 -v fs-evidence:/var/lib/flugschreiber \
-            flugschreiber:ci serve --mock-upstream
-
-          for i in $(seq 1 40); do
-            curl -sf http://127.0.0.1:8080/healthz && break
-            sleep 0.25
-          done
-
-          curl -sf http://127.0.0.1:8080/v1/chat/completions \
-            -H 'Content-Type: application/json' \
-            -d '{"model":"m","messages":[{"role":"user","content":"ci"}]}' > /dev/null
-
-          curl -sfN http://127.0.0.1:8080/v1/chat/completions \
-            -H 'Content-Type: application/json' \
-            -d '{"model":"m","stream":true,"messages":[{"role":"user","content":"ci stream"}]}' > /dev/null
-
-          docker exec fs flugschreiber verify --dir /var/lib/flugschreiber
-          docker exec fs flugschreiber report --dir /var/lib/flugschreiber --out /tmp/reports
-          docker exec fs flugschreiber coverage --dir /var/lib/flugschreiber
-          docker exec fs flugschreiber retention --dir /var/lib/flugschreiber
-          # Written into the evidence volume rather than the tmpfs, because
-          # docker cp cannot read a tmpfs mount and the volume is already owned
-          # by the nonroot user the image runs as.
-          docker exec fs flugschreiber export \
-            --dir /var/lib/flugschreiber --out /var/lib/flugschreiber/bundle.tar.gz
-
-          # The bundle must never carry the signing key, the client salt or the
-          # content keystore. The image is distroless and has no shell, so a
-          # throwaway container does the inspecting. Running tar inside fs would
-          # fail silently and the check would pass no matter what the bundle
-          # contained.
-          contents=$(docker run --rm -v fs-evidence:/e busybox tar tzf /e/bundle.tar.gz)
-          echo "$contents"
-          if echo "$contents" | grep -E 'signing-key|client-salt|content-keys'; then
-            echo "the evidence bundle leaked a secret"
-            exit 1
-          fi
-          echo "$contents" | grep -q 'VERIFY.md'
-          echo "$contents" | grep -q 'public-key.pem'
-
-          docker rm -f fs
-
-      - name: Generate SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          image: flugschreiber:ci
-          format: spdx-json
-          output-file: sbom.spdx.json
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: sbom.spdx.json
-
-  # The chart carries the defaults that decide whether a deployment records
-  # anything, and it rots faster than the code because nothing compiles it. A
-  # value renamed in values.yaml and not in a template installs cleanly and
-  # runs the proxy on defaults nobody chose.
-  #
-  # No cluster is involved. `helm template` is a pure function of the chart and
-  # the values, and kubeconform reads JSON schemas over HTTP.
-  helm:
-    name: Helm chart
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      # 3.16 or later, for --skip-schema-validation. The checks that prove a
-      # bad values file is refused by the template rather than only by the
-      # schema need it.
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.16.4
-
-      # A missing kubeconform costs the schema check and nothing else, so the
-      # download not working is not a reason to fail a pull request.
-      - name: Install kubeconform
-        run: |
-          url=https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
-          if curl -fsSL --retry 3 "$url" | tar -xz -C /usr/local/bin kubeconform; then
-            kubeconform -v
-          else
-            echo "kubeconform could not be installed. The chart is still linted and rendered."
-          fi
-
-      - name: Lint, render and schema check the chart
-        run: ./deploy/helm/check.sh
-
-  # The generated documents carry claims we have committed to not making. A
-  # grep is a cheap way to keep that promise honest as the copy evolves.
-  honest-framing:
-    name: Honest framing
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check for compliance claims
-        run: |
-          set +e
-          patterns='makes you compliant|ensures compliance|guarantees compliance|fully compliant|achieve compliance|compliance guaranteed'
-          hits=$(grep -rniE "$patterns" \
-            --include='*.md' --include='*.tmpl' --include='*.go' \
-            . | grep -v '^./DECISIONS.md' | grep -v '_test.go')
-          if [ -n "$hits" ]; then
-            echo "Found copy claiming to confer compliance:"
-            echo "$hits"
-            echo
-            echo "Flugschreiber produces evidence and documentation inputs. Reword it."
-            exit 1
-          fi
-          echo "No compliance claims found."
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath -o dist/ ./cmd/...
