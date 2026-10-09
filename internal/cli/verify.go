@@ -37,6 +37,7 @@ Flags:
 	var (
 		dir    = fs.String("dir", "", "evidence directory to verify (or FLUGSCHREIBER_DATA_DIR)")
 		asJSON = fs.Bool("json", false, "emit the result as JSON")
+		format = fs.String("format", "", "output format: text (default), json or sarif; --json is an alias for --format json")
 		quiet  = fs.Bool("quiet", false, "print nothing; report the result through the exit status only")
 
 		requireAttestation = fs.Bool("require-attestation", false,
@@ -46,6 +47,17 @@ Flags:
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *asJSON {
+		if *format != "" && *format != "json" {
+			return fmt.Errorf("verify: --json conflicts with --format %s", *format)
+		}
+		*format = "json"
+	}
+	switch *format {
+	case "", "text", "json", "sarif":
+	default:
+		return fmt.Errorf("verify: unknown format %q; use text, json or sarif", *format)
 	}
 	if err := resolveDir(fs, "verify", dir); err != nil {
 		return err
@@ -77,7 +89,15 @@ Flags:
 
 	switch {
 	case *quiet:
-	case *asJSON:
+	case *format == "sarif":
+		doc, err := verifySARIF(res)
+		if err != nil {
+			return err
+		}
+		if err := emitJSON(doc); err != nil {
+			return err
+		}
+	case *format == "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(res); err != nil {

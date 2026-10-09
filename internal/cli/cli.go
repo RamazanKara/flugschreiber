@@ -34,6 +34,7 @@ Maintain:
   erase           Destroy the stored content of a session (crypto-shredding)
   repair          Finish a write a power loss interrupted, so the server can start
   version         Print build information
+  completion      Print a Bash or PowerShell completion script
 
 Every command that reads evidence takes --dir, and falls back to
 FLUGSCHREIBER_DATA_DIR when the flag is not given.
@@ -48,7 +49,7 @@ anyone compliant with anything, and it is not legal advice.
 // undocumented site command so that a maintainer's typo is corrected too.
 var commandNames = []string{
 	"serve", "verify", "report", "coverage", "inspect", "export",
-	"retention", "keys", "archive-verify", "erase", "repair", "site", "version",
+	"retention", "keys", "archive-verify", "erase", "repair", "site", "version", "completion",
 }
 
 // Main dispatches the multi-command binary and returns a process exit code.
@@ -84,6 +85,8 @@ func Main(args []string) int {
 		err = Repair(args[1:])
 	case "site":
 		err = Site(args[1:])
+	case "completion":
+		err = Completion(args[1:])
 	case "version":
 		PrintVersion()
 		return 0

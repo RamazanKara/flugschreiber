@@ -10,6 +10,13 @@ enabled. No external Go modules or C compiler are needed to build the binaries.
 
 Run from the repository root:
 
+With GNU Make and a POSIX shell, install the check tools below, then run
+`make check` and `make fuzz`. The single CI workflow mirrors these commands.
+`make test` enables the race detector only when cgo is enabled. On Windows,
+Git Bash supplies the shell; GNU Make must also be on PATH.
+
+The equivalent PowerShell gate without a C compiler is:
+
 ```powershell
 $ErrorActionPreference = 'Stop'
 $env:PATH = 'C:\Program Files\Go\bin;' + $env:PATH
@@ -28,6 +35,8 @@ $unformatted = gofmt -l ./cmd ./internal ./test
 if ($LASTEXITCODE -or $unformatted) { throw "gofmt needed: $unformatted" }
 go vet ./...
 if ($LASTEXITCODE) { throw 'vet failed' }
+golangci-lint run --enable-only staticcheck
+if ($LASTEXITCODE) { throw 'staticcheck failed' }
 golangci-lint run --concurrency=2
 if ($LASTEXITCODE) { throw 'lint failed' }
 go test -count=1 ./...
@@ -70,12 +79,21 @@ tests still run on Windows.
 
 ## Build and checksum
 
-There is no `make release` target. `make build` builds both binaries for the
-host with version ldflags and needs Make plus a POSIX shell. This PowerShell
-equivalent cross-compiles the same five targets as the release workflow:
+`make build` builds both binaries for the host with version ldflags and needs
+Make plus a POSIX shell. To checksum that local host build:
+
+```bash
+make build
+(cd dist && sha256sum flugschreiber* proxyd* > SHA256SUMS)
+(cd dist && sha256sum -c SHA256SUMS)
+```
+
+For distribution, this PowerShell script cross-compiles and packages Linux and
+macOS on amd64/arm64 plus Windows on amd64, then writes `SHA256SUMS`:
 
 ```powershell
 $version = 'v0.7.1' # Set to the patch release being prepared.
+$env:CGO_ENABLED = '0'
 $commit = git rev-parse HEAD
 if ($LASTEXITCODE) { throw 'cannot identify the release commit' }
 $buildDate = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -140,15 +158,14 @@ local gate results and any platform checks not run. The manual artifacts carry
 checksums, but no GitHub Actions provenance or keyless cosign signatures; do not
 claim the workflow verification described in `SECURITY.md` for these assets.
 
-After reviewing the commit, notes and all five archives, a maintainer with the
-GitHub CLI authenticated can create a draft release from the same PowerShell
-session:
-
-```powershell
-gh release create $version @artifacts $checksumFile --target $commit --draft --title "Flugschreiber $version" --notes-file "$releaseDir/release-notes.md"
-if ($LASTEXITCODE) { throw 'release creation failed' }
-```
+After reviewing the commit, notes and all five archives, a maintainer can create
+a draft release in GitHub's web interface, choose the reviewed commit and
+version, and attach the archives, `SHA256SUMS` and release notes.
 
 Review the draft and publish it when ready. This local binary release does not
 publish a container image, Helm chart, SBOM or attestation. None of the build or
 gate commands above publish, push or tag anything.
+
+Website publication is also manual. Build and validate it locally with
+`go run ./cmd/flugschreiber site --out ./dist/site`, then publish the reviewed
+output through the hosting provider when authorised.

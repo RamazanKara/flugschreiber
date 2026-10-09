@@ -262,6 +262,17 @@ walkthrough from `up` to a verified log to an exported bundle.
 
 ## Configuration
 
+Check a deployment before starting it:
+
+```bash
+flugschreiber serve --config config.json --check-config
+```
+
+This applies the same file, environment and flag layers as `serve`, checks the
+settings and redaction patterns, and exits without opening listeners, running
+signing helpers or writing evidence. JSON errors include the filename, line and
+column. See [the CLI guide](docs/CLI.md) for examples and the preflight's scope.
+
 Non-empty string flags and non-zero number flags override the environment and
 config file. Boolean flags only enable settings; they cannot disable a setting
 enabled by a lower layer. The environment variables supported by these flags
@@ -345,13 +356,15 @@ for the local gate and Windows prerequisites.
 git clone https://github.com/RamazanKara/flugschreiber
 cd flugschreiber
 make build          # binaries in ./dist
-make test           # everything, with the race detector
+make test           # everything; race detector when cgo is enabled
 make acceptance     # the quickstart above, as a test
 ```
 
-`go.mod` has no `require` block. The tag-triggered release workflow rejects
-external Go dependencies. GitHub Actions is currently unavailable because of
-billing; run `make lint test build` locally before accepting a change.
+`go.mod` has no `require` block; `make deps` enforces zero external Go dependencies.
+GitHub Actions is currently unavailable because of billing. The single CI
+workflow mirrors `make check` and `make fuzz`; run both locally before accepting
+a change. [docs/RELEASING.md](docs/RELEASING.md) covers local builds and
+`SHA256SUMS`. Releases and website publication are manual.
 
 ### Recording the demo
 
@@ -375,6 +388,12 @@ script, re-render, commit.
 | `archive-verify` | Check that the offsite archive holds every sealed segment |
 | `erase` | Destroy the stored content of a session, leaving the chain intact |
 | `repair` | Finish a write a power loss interrupted, so the server can start again |
+| `completion` | Generate Bash or PowerShell shell completions |
+
+`verify --format sarif` emits SARIF 2.1.0 findings with file and line locations
+for audit tooling. `--format json` is equivalent to the existing `--json`;
+the default text output and exit statuses are unchanged. The
+[CLI guide](docs/CLI.md) covers automation and completion installation.
 
 Three are worth calling out.
 

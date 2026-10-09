@@ -1,9 +1,10 @@
-# Optional local checks: make test acceptance overhead cover image helm demo; scripts/demo.sh; deploy/helm/check.sh.
+# Actions is currently unavailable; make check and make fuzz are the local gate.
 name: CI
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -21,7 +22,7 @@ jobs:
   ci:
     name: Lint, test and build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -29,23 +30,13 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Check formatting
+      - name: Install check tools
         run: |
-          unformatted=$(gofmt -l ./cmd ./internal ./test)
-          if [ -n "$unformatted" ]; then
-            echo "gofmt needed on:"
-            echo "$unformatted"
-            exit 1
-          fi
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+          go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.14.0
-          args: --concurrency=2
+      - name: Local gate
+        run: make check
 
-      - name: Test
-        run: make test
-
-      - name: Build
-        run: make build
+      - name: Fuzz parsers
+        run: make fuzz

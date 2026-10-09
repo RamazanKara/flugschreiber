@@ -38,6 +38,12 @@ The contract:
 New commands, new flags, new keys and new fields are additive and may arrive in
 any release.
 
+`verify --format json` produces the same object as `--json`. `--format sarif`
+adds a SARIF 2.1.0 representation; it does not change the verification or exit
+codes. Combining `--json` with a different explicit format is an error.
+`--quiet` suppresses every format. See [CLI.md](CLI.md) for SARIF field mapping
+and shell completion setup.
+
 ## Exit codes
 
 `verify` distinguishes completed integrity findings from checks that could not
@@ -72,6 +78,12 @@ Only the variables handled by `Config.ApplyEnv` are supported. For example,
 `request_timeout`, `shutdown_timeout`, `content_keystore` and the
 `upstreams` routing list have no environment form. See the flag table in
 [README.md](../README.md); the routing list is config-file only.
+
+`serve --check-config` validates those same layers and exits without startup
+side effects. It checks settings and redaction patterns, but does not test
+external files, network access, port availability or evidence integrity.
+JSON decoding failures include one-based line and byte-column positions;
+cross-field validation errors describe the effective settings after layering.
 
 The reading commands follow the same layering for the one flag they all share:
 `--dir` names the evidence directory, and when the flag is absent it comes from

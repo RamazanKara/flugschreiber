@@ -50,6 +50,9 @@ var Pages = []Page{
 	{"annex-iv", "docs/annex-iv-technical-documentation-generator.md",
 		"The Annex IV generator", "Guides",
 		"How the technical documentation skeleton is produced from observed traffic."},
+	{"cli", "docs/CLI.md",
+		"Deployment checks and audit automation", "Guides",
+		"Configuration preflight, SARIF verification output, and shell completions."},
 
 	{"mapping", "MAPPING.md",
 		"Field mapping", "Reference",
@@ -85,6 +88,9 @@ var Pages = []Page{
 	{"contributing", "CONTRIBUTING.md",
 		"Contributing", "Project",
 		"How to work on Flugschreiber, and what a change needs to land."},
+	{"releasing", "docs/RELEASING.md",
+		"Local releases", "Project",
+		"Local checks, cross-platform builds and SHA256SUMS."},
 }
 
 // Options configures a build.

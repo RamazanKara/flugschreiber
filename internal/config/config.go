@@ -259,10 +259,15 @@ func (c *Config) LoadFile(path string) error {
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(c); err != nil {
-		return fmt.Errorf("config: parse %s: %w", path, err)
+		offset, detail := configError(b)
+		return fileError(path, b, offset, detail)
 	}
+	end := dec.InputOffset()
 	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("config: parse %s: unexpected data after configuration", path)
+		for end < int64(len(b)) && strings.ContainsRune(" \r\n\t", rune(b[end])) {
+			end++
+		}
+		return fileError(path, b, end, errors.New("unexpected data after configuration"))
 	}
 	return nil
 }
@@ -439,6 +444,9 @@ func (c *Config) Validate() error {
 		c.RedactPatterns = content.DefaultPatternNames
 	}
 	if err := c.validateCustody(); err != nil {
+		return err
+	}
+	if _, err := content.NewRedactor(c.RedactPatterns); err != nil {
 		return err
 	}
 	return nil

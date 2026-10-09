@@ -13,7 +13,8 @@ a shell and compiler toolchain such as Git Bash with MinGW-w64.
 ```bash
 git clone https://github.com/RamazanKara/flugschreiber
 cd flugschreiber
-make check          # format, vet, test
+make check          # formatting, dependencies, vet, lint, staticcheck, tests, vulnerabilities, build
+make fuzz           # each parser target for 30 seconds
 make acceptance     # the quickstart, as a test
 ```
 
@@ -23,15 +24,15 @@ make acceptance     # the quickstart, as a test
 
 ```bash
 make check
-make lint           # needs golangci-lint
+make fuzz
 ```
 
-The CI workflow runs formatting checks, golangci-lint, `make test` (including
-acceptance tests and the race detector) and `make build` on Linux. GitHub Actions
-is currently unavailable because of billing; use `make lint test build` locally
-as the gate. Container and Helm checks are separate local targets. See
-`docs/RELEASING.md` for the Windows gate without a C compiler,
-fuzz runs, platform limitations and manual release commands.
+The single CI workflow mirrors these targets on Linux. `make test` includes
+acceptance tests and enables the race detector only when `go env CGO_ENABLED`
+is 1. GitHub Actions is currently unavailable because of billing; local results
+are the gate. Install golangci-lint (which includes staticcheck) and govulncheck as described in
+[docs/RELEASING.md](docs/RELEASING.md). Container and Helm checks are separate
+local targets. Releases and site publication are manual.
 
 ## What we are strict about
 
@@ -47,7 +48,7 @@ documentation changes for claims the implementation cannot support.
 definition of done. A change that breaks it needs a very good reason.
 
 **No new dependency without an entry in DECISIONS.md.** See D1 for why. The
-tag-triggered release workflow rejects any `require` block, so adding a
+`make deps` target rejects external modules, so adding a
 dependency also requires a deliberate change to that gate.
 
 **Generated documents mark their gaps.** If the generator cannot fill a section

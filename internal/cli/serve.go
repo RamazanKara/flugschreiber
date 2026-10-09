@@ -44,21 +44,22 @@ environment variables.
 	}
 
 	var (
-		configPath = fs.String("config", "", "path to a JSON config file")
-		listen     = fs.String("listen", "", "address to listen on (default :8080)")
-		upstream   = fs.String("upstream", "", "upstream OpenAI-compatible base URL, e.g. http://vllm:8000")
-		mock       = fs.Bool("mock-upstream", false, "serve a built-in deterministic mock instead of a real upstream")
-		dataDir    = fs.String("data-dir", "", "evidence directory (default /var/lib/flugschreiber)")
-		mode       = fs.String("content-mode", "", "content capture mode: store, hash or redact (default hash)")
-		redact     = fs.String("redact-patterns", "", "comma-separated redaction patterns, used when content-mode is redact")
-		retention  = fs.Int("retention-days", 0, "minimum retention in days (floor 180)")
-		tlsCert    = fs.String("tls-cert", "", "TLS certificate file")
-		tlsKey     = fs.String("tls-key", "", "TLS key file")
-		logLevel   = fs.String("log-level", "", "debug, info, warn or error")
-		org        = fs.String("organisation", "", "organisation name, used to pre-fill generated documentation")
-		system     = fs.String("system-name", "", "system name, used to pre-fill generated documentation")
-		purpose    = fs.String("purpose", "", "intended purpose, used to pre-fill generated documentation")
-		contact    = fs.String("contact", "", "accountable contact, used to pre-fill generated documentation")
+		configPath  = fs.String("config", "", "path to a JSON config file")
+		checkConfig = fs.Bool("check-config", false, "validate configuration and exit without starting the proxy or writing evidence")
+		listen      = fs.String("listen", "", "address to listen on (default :8080)")
+		upstream    = fs.String("upstream", "", "upstream OpenAI-compatible base URL, e.g. http://vllm:8000")
+		mock        = fs.Bool("mock-upstream", false, "serve a built-in deterministic mock instead of a real upstream")
+		dataDir     = fs.String("data-dir", "", "evidence directory (default /var/lib/flugschreiber)")
+		mode        = fs.String("content-mode", "", "content capture mode: store, hash or redact (default hash)")
+		redact      = fs.String("redact-patterns", "", "comma-separated redaction patterns, used when content-mode is redact")
+		retention   = fs.Int("retention-days", 0, "minimum retention in days (floor 180)")
+		tlsCert     = fs.String("tls-cert", "", "TLS certificate file")
+		tlsKey      = fs.String("tls-key", "", "TLS key file")
+		logLevel    = fs.String("log-level", "", "debug, info, warn or error")
+		org         = fs.String("organisation", "", "organisation name, used to pre-fill generated documentation")
+		system      = fs.String("system-name", "", "system name, used to pre-fill generated documentation")
+		purpose     = fs.String("purpose", "", "intended purpose, used to pre-fill generated documentation")
+		contact     = fs.String("contact", "", "accountable contact, used to pre-fill generated documentation")
 
 		eventsToken = fs.String("events-token", "",
 			"bearer token for the oversight events endpoint; while this is empty the endpoint stays disabled")
@@ -145,6 +146,14 @@ environment variables.
 	}
 	if *redact != "" {
 		cfg.RedactPatterns = strings.Split(*redact, ",")
+	}
+
+	if *checkConfig {
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+		fmt.Println("configuration valid")
+		return nil
 	}
 
 	log := newLogger(cfg.LogLevel)

@@ -20,8 +20,13 @@ build: ## Build both binaries into ./dist
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/ ./cmd/flugschreiber ./cmd/proxyd
 
 .PHONY: test
-test: ## Run every test with the race detector
-	go test -race -count=1 ./...
+test: ## Run every test, with the race detector when cgo is enabled
+	@if [ "$$(go env CGO_ENABLED)" = 1 ]; then \
+	  go test -race -count=1 ./...; \
+	else \
+	  echo "CGO_ENABLED=0: running tests without the race detector"; \
+	  go test -count=1 ./...; \
+	fi
 
 .PHONY: test-short
 test-short: ## Run unit tests only, skipping the binary-building acceptance test
@@ -53,12 +58,37 @@ lint: ## Run golangci-lint
 fmt: ## Format the source
 	gofmt -w ./cmd ./internal ./test
 
+.PHONY: fmt-check
+fmt-check: ## Check formatting without changing files
+	@test -z "$$(gofmt -l ./cmd ./internal ./test)" || { gofmt -l ./cmd ./internal ./test; exit 1; }
+
+.PHONY: staticcheck
+staticcheck: ## Run staticcheck through golangci-lint
+	golangci-lint run --enable-only staticcheck
+
+.PHONY: vuln
+vuln: ## Check for reachable known vulnerabilities
+	govulncheck ./...
+
+.PHONY: deps
+deps: ## Enforce zero external Go dependencies
+	@modules="$$(go list -m all)" && test "$$(printf '%s\n' "$$modules" | wc -l)" -eq 1
+
+.PHONY: fuzz
+fuzz: ## Run each parser fuzz target for 30 seconds
+	@set -e; for pkg in config openai proxy evidence archive report pdf; do \
+	  targets="$$(go test ./internal/$$pkg -list '^Fuzz')"; \
+	  for target in $$(printf '%s\n' "$$targets" | awk '/^Fuzz/{print $$1}'); do \
+	    go test ./internal/$$pkg -run '^$$' -fuzz "^$$target$$" -fuzztime=30s -parallel=2 -timeout=2m; \
+	  done; \
+	done
+
 .PHONY: vet
 vet: ## Run go vet
 	go vet ./...
 
 .PHONY: check
-check: fmt vet test ## Format, vet and test
+check: fmt-check deps vet lint staticcheck test vuln build ## Run the local release gate
 
 .PHONY: helm
 helm: ## Lint, render and schema check the Helm chart. Needs no cluster

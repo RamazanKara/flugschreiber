@@ -13,6 +13,11 @@ claims the tool confers compliance. Each shipped item adds its entry to
 
 ## Shipped
 
+**Unreleased, deployment and audit usability.** Configuration preflight with
+source locations, SARIF verification output, and Bash/PowerShell completion.
+These close routine operator gaps without changing the evidence schema or
+configuration layering; the larger custody items below retain their scope.
+
 **v0.2.0, "Coverage": record everything that talks to the model.** The Responses
 API (`/v1/responses`) is recorded like chat and completions, streamed and not,
 including `previous_response_id`. One instance routes to several model servers

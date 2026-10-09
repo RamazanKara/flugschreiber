@@ -753,3 +753,21 @@ is proxied and not classified, the same as any other unrecognised POST.
 
 Both are named in MAPPING.md's list of what the proxy forwards but does not
 record, so an operator sees the boundary rather than discovering it.
+
+## D48. Operator checks share the existing command contracts
+
+Configuration preflight is `serve --check-config`, so file, environment and
+flag precedence cannot drift from startup. It validates settings and redaction
+patterns without opening listeners or evidence, contacting services or executing
+helpers. JSON diagnostics locate syntax, type, duration and unknown-field errors
+without changing what the decoder accepts.
+
+SARIF is an additional representation of the existing verification result.
+Problem kinds remain rule IDs, and incomplete checks remain distinct from
+integrity findings. Existing text, JSON and exit codes keep their meaning.
+Bash and PowerShell completions ask known commands for help instead of keeping
+a second flag registry or executing the partially typed command.
+
+With Actions unavailable, one CI workflow mirrors the local Make checks.
+Releases and site publication are manual; local archives have SHA256SUMS and
+make no claim to the former workflow's signatures or provenance.

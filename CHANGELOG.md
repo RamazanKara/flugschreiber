@@ -6,6 +6,20 @@ appears in both places or it did not happen.
 
 ## v0.7.1, unreleased
 
+- Add `serve --check-config` to validate the effective settings without opening
+  listeners, invoking helpers or writing evidence. Configuration parse errors
+  now include file, line and column, including nested unknown keys and durations.
+  Redaction patterns are checked alongside the other configuration constraints.
+- Add `verify --format text|json|sarif`. SARIF 2.1.0 preserves finding locations,
+  evidence notes and the distinction between integrity failures and incomplete
+  checks. Existing text output, `--json`, `--quiet` and exit codes are preserved.
+- Add `completion bash|powershell` for commands, key subcommands and flags read
+  from the installed binary's help. Document setup and examples in `docs/CLI.md`.
+- Keep one CI workflow mirroring `make check` and `make fuzz`; releases and site
+  publication are manual while Actions is unavailable. Add local format,
+  dependency, staticcheck, vulnerability and fuzz targets. `make test` runs the
+  race detector only with cgo enabled. Local release instructions use `SHA256SUMS`.
+
 - Require Go 1.27.2 for patched standard-library vulnerabilities; CI, release
   and site builds use the version in `go.mod`, and the container builder uses
   the same patch release. Update golangci-lint to 2.14.0 for Go 1.27 support.

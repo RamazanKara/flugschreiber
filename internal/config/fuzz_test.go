@@ -13,6 +13,7 @@ func FuzzLoadFile(f *testing.F) {
 		`{}`, `{"mock_upstream":true,"request_timeout":"30s"}`,
 		`{"upstreams":[{"name":"local","url":"http://localhost:8000","default":true}]}`,
 		`{"request_timeout":9223372036854775807}`, `{"unknown":true}`, `{} {}`, `null`, `{"`,
+		"{\n\"upstreams\":[{\"unknown\":true}]}", `{"request_timeout":"later"}`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -23,6 +24,14 @@ func FuzzLoadFile(f *testing.F) {
 		}
 		c := Default()
 		if err := c.LoadFile(path); err != nil {
+			offset, detail := configError(data)
+			if detail != nil && (offset < 0 || offset > int64(len(data))) {
+				t.Fatalf("error offset %d outside input of %d bytes", offset, len(data))
+			}
+			again := Default()
+			if other := again.LoadFile(path); other == nil || other.Error() != err.Error() {
+				t.Fatalf("diagnostic changed: %v, %v", err, other)
+			}
 			return
 		}
 		again := Default()

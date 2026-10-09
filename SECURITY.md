@@ -182,12 +182,19 @@ content. Treat that access as you treat write access to the directory itself.
 
 ## Supply chain
 
+Current builds and releases are local while GitHub Actions is unavailable;
+the single CI workflow only checks the project. Follow
+[docs/RELEASING.md](docs/RELEASING.md) for `SHA256SUMS`. These local artifacts
+have no workflow attestation, cosign signature or SBOM. The signature and
+provenance instructions below apply to historical releases that carry those
+assets from the former release workflow.
+
 - No external Go dependencies. `go.mod` has no `require` block.
 - Builds use `-trimpath` and disable cgo. Reproducing a release also requires
   matching its exact toolchain, source and build metadata.
-- Release images are distroless static and published with an SBOM.
-- Release artifacts are signed with cosign (keyless, via GitHub OIDC).
-- The release workflow generates SLSA build provenance: an attestation, signed through
+- The former release workflow published distroless images with an SBOM.
+- It signed release artifacts with cosign (keyless, via GitHub OIDC).
+- It generated SLSA build provenance: an attestation, signed through
   GitHub OIDC, of which workflow, commit and runner produced it. The binaries
   are covered through their checksum file and the image through its digest.
 
