@@ -36,8 +36,10 @@ Flags:
 `)
 		fs.PrintDefaults()
 		fmt.Fprintf(fs.Output(), `
-Every flag can also be set as an environment variable, for example
-%sUPSTREAM. Flags win over the environment, which wins over the config file.
+Many settings also accept an environment variable, for example %sUPSTREAM.
+Non-empty string and non-zero number flags override the environment and config
+file. Boolean flags only enable settings. See README.md for the supported
+environment variables.
 `, config.EnvPrefix)
 	}
 

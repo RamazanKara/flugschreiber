@@ -17,8 +17,7 @@ help: ## Show this help
 .PHONY: build
 build: ## Build both binaries into ./dist
 	@mkdir -p dist
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/flugschreiber ./cmd/flugschreiber
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/proxyd ./cmd/proxyd
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/ ./cmd/flugschreiber ./cmd/proxyd
 
 .PHONY: test
 test: ## Run every test with the race detector

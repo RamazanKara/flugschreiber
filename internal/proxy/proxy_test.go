@@ -46,6 +46,11 @@ func newHarness(t *testing.T, upstream http.Handler, tune func(*config.Config)) 
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 
 	srv, err := New(cfg, store, slog.New(slog.DiscardHandler))
 	if err != nil {

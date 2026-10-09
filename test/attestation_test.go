@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -69,7 +70,7 @@ func TestSignedCheckpointsAttestTheChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("no signing key was created: %v", err)
 		}
-		if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		if mode := info.Mode().Perm(); runtime.GOOS != "windows" && mode&0o077 != 0 {
 			t.Errorf("signing key mode is %04o; it must not be group or world readable", mode)
 		}
 		body, err := os.ReadFile(priv)

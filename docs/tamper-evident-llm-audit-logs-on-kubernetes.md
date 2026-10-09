@@ -241,8 +241,8 @@ Both keys are read optionally, so a Secret holding only one of them is fine.
 
 ## Sidecar pattern
 
-The chart renders no objects in `mode: sidecar`. It exposes named templates
-instead, so a chart your team owns can put the recorder into its own pod without
+In `mode: sidecar` the chart exposes named templates so a chart your team owns
+can put the recorder into its own pod without
 copying YAML that will then drift:
 
 ```yaml
@@ -314,9 +314,11 @@ The point of `verify` reading only files is that it does not need the cluster:
 ```bash
 # The image is distroless, so kubectl cp cannot work: it runs tar inside the
 # container and there is no tar there. Build a bundle and stream it out.
-kubectl exec -n ai flugschreiber-0 -- \
-  flugschreiber export --dir /var/lib/flugschreiber --out /dev/stdout > evidence.tar.gz
-flugschreiber verify --dir ./evidence-copy
+kubectl exec -n ai deployment/flugschreiber -- \
+  flugschreiber export --dir /var/lib/flugschreiber --out - > evidence.tar.gz
+mkdir -p evidence-copy
+tar -xzf evidence.tar.gz -C evidence-copy
+flugschreiber verify --dir ./evidence-copy/flugschreiber-evidence
 ```
 
 Hand that directory and the binary to an auditor and they can run the same

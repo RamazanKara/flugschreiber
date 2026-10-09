@@ -2,8 +2,6 @@
 
 **Tamper-evident audit logs and EU AI Act documentation for self-hosted LLMs. One base URL change, no application code.**
 
-[![CI](https://github.com/RamazanKara/flugschreiber/actions/workflows/ci.yml/badge.svg)](https://github.com/RamazanKara/flugschreiber/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/RamazanKara/flugschreiber.svg)](https://pkg.go.dev/github.com/RamazanKara/flugschreiber)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Somebody asked you what evidence you have of what your AI did last quarter. You
@@ -13,7 +11,7 @@ teams whose code calls the model are not going to add an SDK because compliance
 asked nicely.
 
 Flugschreiber is a reverse proxy you put in front of any OpenAI-compatible
-endpoint. It records every model interaction to an append-only, hash-chained
+endpoint. It records supported model interactions to an append-only, hash-chained
 log, and it generates the technical documentation and transparency artifacts
 that AI Act preparation needs as inputs, pre-filled from traffic it actually
 observed.
@@ -48,16 +46,8 @@ Then ask what it recorded:
 docker exec flugschreiber flugschreiber verify --dir /var/lib/flugschreiber
 ```
 
-```
-hash chain intact
-
-  directory   /var/lib/flugschreiber
-  segments    1
-  records     3
-  sequence    1 to 3
-  head hash   dbbbf2ff9f5ab06a06de9002235539b3d0735b443b0f5a2c4f8964315ab3a5ae
-  checked in  175.208µs
-```
+The result reports `hash chain intact`, record and segment counts, and the
+current head hash. Counts, timestamps and hashes depend on the calls recorded.
 
 And generate the documents:
 
@@ -78,7 +68,8 @@ http://vllm:8000`.
 
 ## What is actually in the log
 
-One record per interaction, one line of JSON, appended and never rewritten:
+One record per interaction, one line of JSON, appended and never rewritten.
+This is an illustrative record; some digests are abbreviated:
 
 ```json
 {
@@ -111,8 +102,8 @@ One record per interaction, one line of JSON, appended and never rewritten:
 }
 ```
 
-Every record carries the hash of the one before it. Change a byte anywhere and
-verification fails at that record and every record after it:
+Every record carries the hash of the one before it. Change an event byte and
+verification reports a hash mismatch at that record:
 
 ```
 HASH CHAIN VERIFICATION FAILED
@@ -195,7 +186,9 @@ audit.
 becomes a third party's claim rather than this host's clock. Tokens are stored
 verbatim and checked against the checkpoint they cover, with the choice of
 authority yours. Recording continues unaffected whatever the authority does;
-anchoring resumes on its own when it answers again.
+anchoring resumes on its own when it answers again. The built-in verifier checks
+the token imprint against the checkpoint; authenticating the TSA signature and
+certificate chain is a separate step described in [docs/VERIFYING.md](docs/VERIFYING.md).
 
 Rotating is `flugschreiber keys rotate`. It keeps every retired public key,
 because checkpoints signed before a rotation are still evidence. With an
@@ -228,10 +221,8 @@ happened and that nobody changed it since," which needs different properties:
 completeness rather than sampling, tamper-evidence, retention floors, and an
 independent verifier a third party can run without your infrastructure.
 
-The features that overlap are usually the ones behind the enterprise plan:
-audit logging, retention controls, data residency, compliance exports. Here
-they are the product, Apache-2.0, self-hosted, with no telemetry and no
-phone-home of any kind.
+Flugschreiber provides audit logging, retention controls and evidence exports
+under Apache-2.0, self-hosted, with no telemetry or phone-home.
 
 You can run both. They are not competing for the same slot.
 
@@ -240,7 +231,8 @@ You can run both. They are not competing for the same slot.
 ```bash
 helm install flugschreiber ./deploy/helm/flugschreiber \
   --set config.upstream=http://vllm:8000 \
-  --set networkPolicy.modelServer.enabled=true
+  --set modelServer.networkPolicy.enabled=true \
+  --set modelServer.networkPolicy.podSelector.matchLabels.app=vllm
 ```
 
 The chart runs one replica by design: each instance owns its chain, and both
@@ -248,7 +240,7 @@ the chart and the binary enforce the single writer, so the total order over
 your evidence is never in doubt. It ships a NetworkPolicy that permits ingress
 to your model server only from the proxy, which is what turns "we record our
 model calls" into a claim you can defend, and a CronJob that runs `verify` on a
-schedule so any finding pages someone the moment it exists.
+schedule. Configure monitoring of failed Jobs to alert on findings.
 
 Or run it directly. It runs as UID 65532 on a read-only root filesystem with all
 capabilities dropped:
@@ -260,7 +252,7 @@ docker run -d --read-only --tmpfs /tmp \
   ghcr.io/ramazankara/flugschreiber:latest serve --upstream http://vllm:8000
 ```
 
-The image is distroless static, 20 MB, with no shell and no package manager. It
+The Dockerfile uses a distroless static base, with no shell or package manager. It
 needs `--tmpfs /tmp` only so that `report` and `export` have somewhere to write;
 `serve` itself writes nothing outside the evidence volume.
 
@@ -270,8 +262,10 @@ walkthrough from `up` to a verified log to an exported bundle.
 
 ## Configuration
 
-Flags beat environment variables, which beat the config file. Everything has a
-`FLUGSCHREIBER_`-prefixed environment variable.
+Non-empty string flags and non-zero number flags override the environment and
+config file. Boolean flags only enable settings; they cannot disable a setting
+enabled by a lower layer. The environment variables supported by these flags
+are listed below; not every setting has one.
 
 | Flag | Environment | Default | What it does |
 | --- | --- | --- | --- |
@@ -285,7 +279,7 @@ Flags beat environment variables, which beat the config file. Everything has a
 | `--tls-cert`, `--tls-key` | `FLUGSCHREIBER_TLS_CERT_FILE`, `..._KEY_FILE` | | Serve TLS |
 | `--events-token` | `FLUGSCHREIBER_EVENTS_TOKEN` | | Enables the oversight events endpoint; it stays off while empty |
 | `--no-sign` | `FLUGSCHREIBER_SIGNING_DISABLED` | `false` | Stop signing checkpoints |
-| `--checkpoint-interval` | | `5m` | How often to sign the chain head |
+| `--checkpoint-interval` | `FLUGSCHREIBER_CHECKPOINT_INTERVAL` | `5m` | How often to sign the chain head |
 | `--signer` | `FLUGSCHREIBER_SIGNER` | | `exec:<command>` signs checkpoints through an external helper, so the private key never has to live beside the evidence |
 | `--signer-public-key` | `FLUGSCHREIBER_SIGNER_PUBLIC_KEY` | | The key that helper is supposed to hold; a signature that does not verify against it is refused at once |
 | `--tsa-url` | `FLUGSCHREIBER_TSA_URL` | | RFC 3161 timestamping authority to anchor checkpoints to |
@@ -303,8 +297,8 @@ settings and a set of model globs and endpoint kinds it serves. One route is
 marked `default`. It is file-only because a route is structured, and flattening
 it into an environment variable would produce a syntax nobody could read back.
 
-Retention has a 180-day floor, enforced at startup, matching Article 19's
-six-month expectation, so the guarantee holds from the first record.
+Retention has a 180-day floor, enforced at startup. This is a duration in days,
+not six calendar months; choose the period required by your retention policy.
 [DECISIONS.md](DECISIONS.md) explains this and every other design choice.
 
 Client credentials pass through untouched. If a caller sends no `Authorization`
@@ -314,9 +308,8 @@ tells you which caller made a request without holding the key.
 
 ## Overhead
 
-p50 round trip through the proxy is around 0.5 ms against the mock upstream,
-measured over 200 requests, including the mock's own work. Time to first byte on
-a streamed response is roughly 0.3 ms.
+Measure round-trip latency and time to first byte against the mock upstream on
+your own machine. Results include the mock's work and depend on the host:
 
 ```bash
 make overhead
@@ -342,25 +335,11 @@ critical path.
 - [SECURITY.md](SECURITY.md) is the threat model and the trust boundaries
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
-## Timeline
-
-Dates below follow the timeline after the Digital Omnibus agreement. Check them
-against the current text before you plan around them.
-
-| Date | What applies |
-| --- | --- |
-| 2 August 2026 | Article 50 transparency obligations |
-| 2 December 2026 | New prohibitions |
-| 2 December 2027 | Annex III high-risk obligations |
-| 2 August 2028 | Annex I obligations |
-
-Within the first row, one duty starts later: Article 50(2) machine-readable marking
-applies from 2 December 2026 for systems already on the market on 2 August 2026. The
-50(1) interaction disclosure is not deferred.
-
 ## Building from source
 
-Go 1.25 or later. There are no dependencies to fetch.
+Go 1.27.2 or later, GNU Make and a POSIX shell. Race tests need a C compiler.
+There are no external Go module dependencies. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the local gate and Windows prerequisites.
 
 ```bash
 git clone https://github.com/RamazanKara/flugschreiber
@@ -370,8 +349,9 @@ make test           # everything, with the race detector
 make acceptance     # the quickstart above, as a test
 ```
 
-`go.mod` has no `require` block, and CI fails if one appears without a
-corresponding entry in DECISIONS.md.
+`go.mod` has no `require` block. The tag-triggered release workflow rejects
+external Go dependencies. GitHub Actions is currently unavailable because of
+billing; run `make lint test build` locally before accepting a change.
 
 ### Recording the demo
 
@@ -423,7 +403,9 @@ per-session key held outside the log, and erasing destroys the key.
 
 With `--content-encryption`, prompts and completions are sealed under a
 per-session key held in a keystore beside the evidence but outside the chain.
-Erasing destroys the key:
+Erasing destroys the key. In schema v1 this covers prompts and completions;
+tool arguments and tool results are not encrypted by this setting. Existing
+backups of a key can still decrypt its content; see [SECURITY.md](SECURITY.md).
 
 ```bash
 flugschreiber erase --dir /var/lib/flugschreiber --session sess-42 \

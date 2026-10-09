@@ -268,6 +268,7 @@ func Open(opts Options) (*Store, error) {
 	// failure here cannot leave goroutines running behind a Store that Open
 	// never returned.
 	if err := claimWriterLock(opts.Dir, opts.ForceWriterLock); err != nil {
+		s.file.Close()
 		return nil, err
 	}
 

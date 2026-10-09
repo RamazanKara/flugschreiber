@@ -40,35 +40,38 @@ any release.
 
 ## Exit codes
 
-`verify` and `archive-verify` distinguish three outcomes, because a scheduled
-job has to tell an attack from an outage and they used to be the same number.
+`verify` distinguishes completed integrity findings from checks that could not
+be completed:
 
 | Code | Meaning | What an operator should do |
 | --- | --- | --- |
 | 0 | Every check completed and passed | Nothing |
 | 1 | A check completed and failed: the chain is damaged, or something signed contradicts it | Preserve the directory before touching it, then read the problems |
-| 2 | Verification could not be completed: the directory is unreadable, or a key or token a check needs is absent | Treat as an outage or a missing file, not as tampering |
+| 2 | A verification report contains incomplete checks, for example because a key or token is absent | Treat as an outage or a missing file, not as tampering |
 
-Exit 2 is what lets a scheduled job separate operational conditions, a volume
-that did not mount or a key that is not present, from integrity findings, which
-are reserved for exit 1. Its headline states that the chain is intact as far as
-it could be read.
+Exit 2 reports that the chain is intact as far as it could be checked. Errors
+before a verification report can be produced, such as a nonexistent `--dir`,
+exit 1 with a diagnostic instead; do not infer tampering from the status alone.
 
-Every other command exits 0 on success and 1 on failure. `--quiet` on `verify`
-prints nothing and reports through the status alone.
+`archive-verify` exits 1 for missing, mismatched or unreadable objects; inspect
+its JSON `missing`, `mismatched` and `unknown` counts to distinguish them. Other
+command failures also exit 1. Invalid flags and unknown commands exit 2.
+`--quiet` suppresses the verification report, but argument and setup errors can
+still print diagnostics.
 
 ## Flags, the environment and the config file
 
 Flags beat environment variables, which beat the config file.
 
-For strings and numbers that is exact. For booleans the layering is one-way: a
+Non-empty string flags and non-zero number flags override lower layers; empty
+and zero values keep the lower-layer setting. For booleans the layering is one-way: a
 flag can enable a setting, and a setting a lower layer enabled stays enabled,
-so set boolean values in one place. Tri-state flags are on the list for the
-next major version.
+so set boolean values in one place.
 
-Every setting has an environment variable, except the `upstreams` routing list,
-which is a structured list of objects and would need a syntax nobody could read
-back. It is config-file only.
+Only the variables handled by `Config.ApplyEnv` are supported. For example,
+`request_timeout`, `shutdown_timeout`, `content_keystore` and the
+`upstreams` routing list have no environment form. See the flag table in
+[README.md](../README.md); the routing list is config-file only.
 
 The reading commands follow the same layering for the one flag they all share:
 `--dir` names the evidence directory, and when the flag is absent it comes from

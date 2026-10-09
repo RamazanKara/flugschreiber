@@ -179,7 +179,21 @@ func reconcilePublicKey(dir string, pub ed25519.PublicKey) error {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return writePublicKey(path, pub)
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return fmt.Errorf("evidence: encode public key: %w", err)
+	}
+	encoded := pem.EncodeToMemory(&pem.Block{Type: publicKeyPEMType, Bytes: der})
+	// Concurrent starters may already have published the same public key.
+	// Linking avoids replacing a file another starter is reading on Windows.
+	if err := linkNewFile(path, encoded, 0o644); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return reconcilePublicKey(dir, pub)
+		}
+		return fmt.Errorf("evidence: write public key: %w", err)
+	}
+	syncDir(dir)
+	return nil
 }
 
 func createKeyPair(dir string) error {
@@ -197,7 +211,7 @@ func createKeyPair(dir string) error {
 	if err := linkNewFile(path, encoded, 0o600); err != nil {
 		return err
 	}
-	if err := writePublicKey(filepath.Join(dir, PublicKeyFile), pub); err != nil {
+	if err := reconcilePublicKey(dir, pub); err != nil {
 		return err
 	}
 	syncDir(dir)

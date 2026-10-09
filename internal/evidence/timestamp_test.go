@@ -340,7 +340,8 @@ func TestStoreAnchorsItsCheckpointsToTheAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	appendN(t, s, 12)
+	// Stay below the bounded TSA queue even when its worker is scheduled late.
+	appendN(t, s, 4)
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}

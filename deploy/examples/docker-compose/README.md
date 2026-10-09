@@ -1,8 +1,11 @@
 # Flugschreiber with Docker Compose
 
 This runs the recording proxy in front of a model server, using a config file
-rather than flags. It is the shortest path from nothing to a verifiable evidence
-log outside Kubernetes.
+rather than flags. Run the commands below from `deploy/examples/docker-compose`.
+Before starting, set `upstream` in `config.json` to a reachable server, or
+uncomment the `ollama` service, its volume and `depends_on` in `compose.yaml`.
+For the bundled Ollama example, pull `llama3.2` after starting the containers
+with `docker compose exec ollama ollama pull llama3.2`.
 
 ## Run it
 
@@ -10,8 +13,8 @@ log outside Kubernetes.
 docker compose up -d
 ```
 
-Point an application at `http://localhost:8080` in place of your model server.
-Every call it makes is recorded. To try it without an application:
+Point an OpenAI-compatible client at `http://localhost:8080/v1`. Supported
+inference endpoints are recorded. To try it without an application:
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
@@ -21,16 +24,15 @@ curl http://localhost:8080/v1/chat/completions \
 
 ## Verify the evidence
 
-The proxy runs read-only, so `verify` runs from a throwaway container mounted on
-the same volume:
+Run the read-only verifier inside the running proxy container:
 
 ```bash
 docker compose exec flugschreiber \
   flugschreiber verify --dir /var/lib/flugschreiber
 ```
 
-You should see `hash chain intact`, the record count, and `attestation
-attested`.
+You should see `hash chain intact` and the record count. Attestation appears
+after the first checkpoint (every five minutes by default, or at shutdown).
 
 ## Generate the documentation
 
@@ -43,12 +45,14 @@ docker compose cp flugschreiber:/tmp/report ./report
 
 ## Hand an auditor a bundle
 
-The image is distroless, so stream the bundle out rather than `docker cp` from a
-container that has no `tar`:
+Stream the bundle without a TTY so its binary bytes reach the file unchanged:
 
 ```bash
-docker compose exec flugschreiber \
+docker compose exec -T flugschreiber \
   flugschreiber export --dir /var/lib/flugschreiber --out - > evidence.tar.gz
+mkdir -p evidence-copy
+tar -xzf evidence.tar.gz -C evidence-copy
+flugschreiber verify --dir evidence-copy/flugschreiber-evidence
 ```
 
 The bundle carries the segments, the checkpoints, the anchors and every public
@@ -57,8 +61,8 @@ without installing anything. See [docs/VERIFYING.md](../../../docs/VERIFYING.md)
 
 ## Point it at your own model server
 
-The bundled config targets a commented-out `ollama` service. For a real
-deployment, delete that service from `compose.yaml` and set `upstream` in
+The bundled config targets the optional `ollama` service. To use your own model
+server, leave that service commented out and set `upstream` in
 `config.json` to your endpoint:
 
 ```json

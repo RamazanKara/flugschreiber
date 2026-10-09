@@ -21,23 +21,13 @@ flugschreiber report \
   --contact "ai-governance@muster.example"
 ```
 
-```
-generated 3 artifact(s) from 1284 record(s):
+By default this writes eight files: English and German technical documentation
+and transparency packs, each as Markdown and HTML. `--lang en` or `--lang de`
+selects one language; `--pdf` adds a PDF for each document.
 
-  reports/technical-documentation.md       Annex IV technical documentation skeleton
-  reports/transparency-article-50-en.md    Article 50 transparency pack (English)
-  reports/transparency-article-50-de.md    Article 50 transparency pack (German)
-
-  evidence chain    intact (1284 records, 2026-05-01 to 2026-07-22)
-  models observed   llama-3.1-8b-instruct, bge-m3
-  content mode      hash
-
-27 section(s) need a human. They are marked TODO with a note on what belongs there.
-```
-
-Output is deterministic. The same evidence and the same flags produce
-byte-identical documents, so you can commit them and read the diff between
-quarters as a record of what changed.
+For reproducible output, use the same binary, evidence, configuration and flags,
+including a fixed generation timestamp such as `--now 2026-07-22T12:00:00Z`.
+Without `--now`, each run uses the current time.
 
 ## What gets filled in
 
@@ -51,7 +41,7 @@ quarters as a record of what changed.
 | 6. Lifecycle changes | Model identifiers seen in traffic |
 | 7. Harmonised standards | Nothing |
 | 8. Declaration of conformity | Nothing |
-| 9. Post-market monitoring | Nothing |
+| 9. Post-market monitoring | Incident counts by severity and the most recent incident, when recorded |
 
 Roughly a third of the document arrives written. The rest is the part that
 required a human all along.
@@ -67,7 +57,8 @@ finished. Someone would ship it. A blank section marked `TODO` with a sentence
 explaining what belongs there is less impressive in a demo and considerably
 harder to mistake for work that has been done.
 
-The same reasoning applies to sections 4, 7, 8 and 9.
+The same reasoning applies to sections 4, 7 and 8. Section 9 reports observed
+incidents but leaves the monitoring plan and reporting decisions to a human.
 
 ## What the TODO markers look like
 
@@ -144,8 +135,9 @@ merge.
 It cannot tell you whether your system is high-risk. That is a determination
 about your use case.
 
-It cannot see anything above the model API: which human made a request, what
-your application did with the answer, whether anyone reviewed it.
+It cannot infer which human made a request, what your application did with the
+answer, or whether anyone reviewed it. Human-intervention and incident events
+must be submitted explicitly through the authenticated events endpoint.
 
 It cannot see training data, fine-tuning, or your retrieval corpus.
 

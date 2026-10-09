@@ -150,5 +150,9 @@ func recordRepair(dir string, torn *evidence.TornRecord, actor string) (uint64, 
 	if err := store.Close(); err != nil {
 		return 0, err
 	}
-	return store.Appended(), nil
+	verified, err := evidence.Verify(dir)
+	if err != nil {
+		return 0, err
+	}
+	return verified.LastSeq, nil
 }

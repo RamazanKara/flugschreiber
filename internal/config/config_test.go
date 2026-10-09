@@ -138,6 +138,35 @@ func TestLoadFileMergesOverDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadFileRejectsTrailingData(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		suffix  string
+		wantErr bool
+	}{
+		{"whitespace", " \n\t", false},
+		{"second object", ` {"retention_days":30}`, true},
+		{"null", " null", true},
+		{"garbage", " trailing text", true},
+		{"incomplete object", " {", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(`{"listen":":9000"}`+tc.suffix), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			c := Default()
+			err := c.LoadFile(path)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("LoadFile = %v, want error %v", err, tc.wantErr)
+			}
+			if err == nil && c.Listen != ":9000" {
+				t.Fatalf("Listen = %q, want :9000", c.Listen)
+			}
+		})
+	}
+}
+
 func TestApplyEnvOverlays(t *testing.T) {
 	t.Setenv(EnvPrefix+"LISTEN", ":7000")
 	t.Setenv(EnvPrefix+"UPSTREAM", "http://ollama:11434")

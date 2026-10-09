@@ -201,6 +201,9 @@ func TestProxyOverheadStaysUnderBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("overhead measurement runs the binary")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("the 5 ms latency budget is measured on Linux; native Windows scheduling makes this check unreliable")
+	}
 
 	bin := buildBinary(t)
 	dataDir := filepath.Join(t.TempDir(), "evidence")

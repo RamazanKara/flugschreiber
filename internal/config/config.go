@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strconv"
@@ -259,6 +260,9 @@ func (c *Config) LoadFile(path string) error {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(c); err != nil {
 		return fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("config: parse %s: unexpected data after configuration", path)
 	}
 	return nil
 }

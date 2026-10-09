@@ -10,6 +10,7 @@ package archivecheck
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -63,6 +64,7 @@ type Object struct {
 	Kind   string `json:"kind"`
 	Local  string `json:"local_file,omitempty"`
 	Status string `json:"status"`
+	minSeq uint64
 
 	// Required marks an object whose absence is a gap in the archive. The
 	// snapshots are not: the store writes one per run rather than one per
@@ -213,7 +215,7 @@ func Verify(ctx context.Context, ar Reader, dir, prefix string, deep bool) (*Ver
 		"the chain in the archived segments: this command compares objects, it does not verify records; run flugschreiber verify against this directory, or against a copy restored from the archive")
 	if _, err := os.Stat(filepath.Join(dir, evidence.TimestampsFile)); err == nil {
 		res.NotChecked = append(res.NotChecked, fmt.Sprintf(
-			"the archived copies of %s: the store keys them by the head the writer held when it uploaded them, which after an unclean shutdown is a sequence no checkpoint attests to, so the key cannot be derived from this directory",
+			"the archived copies of %s: the store keys them by byte count, and the historical snapshot sizes cannot be derived from the checkpoints",
 			evidence.TimestampsFile))
 	}
 	if !deep {
@@ -280,6 +282,16 @@ func (p *probe) compare(o *Object) {
 
 	rel, n, err := compareArchived(local, body)
 	o.Bytes = n
+	if err == nil && (rel == bytesIdentical || rel == bytesPrefix) && o.minSeq > 0 {
+		complete, checkErr := snapshotComplete(local, n, o.minSeq)
+		if checkErr != nil {
+			err = checkErr
+		} else if !complete {
+			o.Status = StatusMismatch
+			o.Detail = joinDetail(o.Detail, fmt.Sprintf("the snapshot is incomplete or does not reach its named sequence %d", o.minSeq))
+			return
+		}
+	}
 	switch {
 	case err != nil:
 		o.Status = StatusUnknown
@@ -306,6 +318,32 @@ func (p *probe) compare(o *Object) {
 	default:
 		o.Status = StatusMismatch
 		o.Detail = joinDetail(o.Detail, fmt.Sprintf("the two disagree from byte %d", n))
+	}
+}
+
+func snapshotComplete(local *os.File, size int64, minSeq uint64) (bool, error) {
+	if size == 0 {
+		return false, nil
+	}
+	var last [1]byte
+	if _, err := local.ReadAt(last[:], size-1); err != nil {
+		return false, err
+	}
+	if last[0] != '\n' {
+		return false, nil
+	}
+	// The bytes already match the local prefix. Its last complete record must
+	// reach the key's head; an arbitrary shorter prefix is lost evidence.
+	dec := json.NewDecoder(io.NewSectionReader(local, 0, size))
+	var head struct {
+		Seq uint64 `json:"seq"`
+	}
+	for {
+		if err := dec.Decode(&head); errors.Is(err, io.EOF) {
+			return head.Seq >= minSeq, nil
+		} else if err != nil {
+			return false, err
+		}
 	}
 }
 
@@ -446,7 +484,7 @@ func (p *probe) checkOpenSnapshots(prefix string, checkpoints []evidence.Checkpo
 		}
 		seen[key] = true
 
-		o := Object{Key: archive.JoinKey(prefix, key), Kind: KindOpenSegment, Local: path}
+		o := Object{Key: archive.JoinKey(prefix, key), Kind: KindOpenSegment, Local: path, minSeq: c.Seq}
 		if p.deep {
 			p.compare(&o)
 		} else {
@@ -482,7 +520,7 @@ func (p *probe) checkCheckpoints(dir, prefix string, checkpoints []evidence.Chec
 		}
 		seen[c.Seq] = true
 
-		o := Object{Key: archive.JoinKey(prefix, checkpointSnapshotKey(c.Seq)), Kind: KindCheckpoints, Local: localPath}
+		o := Object{Key: archive.JoinKey(prefix, checkpointSnapshotKey(c.Seq)), Kind: KindCheckpoints, Local: localPath, minSeq: c.Seq}
 		if p.deep {
 			p.compare(&o)
 		} else {

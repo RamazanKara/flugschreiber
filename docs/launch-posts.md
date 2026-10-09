@@ -62,15 +62,16 @@ Some things I decided that might be worth arguing about:
   dependency is a party that can change what ends up in an evidence file.
 - The hash chain proves the log is internally consistent, not who wrote it.
   Someone with write access to the whole directory could recompute it from
-  scratch. Signed checkpoints are next. I would rather say that plainly than let
-  someone discover it during an audit.
+  scratch if they also hold the signing key. Signed checkpoints are enabled
+  by default; their protection depends on keeping the key secure.
 
 It does not make anyone compliant, it is not legal advice, and an LLM is not
 high-risk in itself. It produces evidence and documentation inputs. That is the
 whole pitch.
 
-p50 overhead is about 0.5ms. Streaming is relayed frame by frame with a test
-that fails if that regresses. Apache-2.0, no telemetry, no phone-home.
+Streaming is relayed frame by frame with a test that fails if that regresses.
+Run `make overhead` to measure latency on your own host. Apache-2.0, no telemetry,
+no phone-home.
 
 https://github.com/RamazanKara/flugschreiber
 
@@ -140,9 +141,6 @@ a thing a logging tool should do to you quietly.
 
 Apache-2.0. No telemetry, no phone-home, no SaaS.
 
-Article 50 transparency obligations apply from 2 August 2026 under the timeline
-following the Digital Omnibus agreement. That is closer than it reads.
-
 github.com/RamazanKara/flugschreiber
 
 If you have been through an audit and can tell me what was actually asked for,
@@ -197,10 +195,6 @@ in ein Chatfenster tippen. Das sollte ein Protokollierungswerkzeug niemand
 stillschweigend antun.
 
 Apache-2.0. Keine Telemetrie, kein Phone-Home, kein SaaS.
-
-Die Transparenzpflichten nach Artikel 50 gelten nach dem Zeitplan im Anschluss an
-die Einigung zum Digital Omnibus ab dem 2. August 2026. Das ist näher, als es
-klingt.
 
 github.com/RamazanKara/flugschreiber
 

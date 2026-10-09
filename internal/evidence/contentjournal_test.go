@@ -1,48 +1,37 @@
 package evidence
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-// Minting a key used to rewrite the whole keystore, so the cost of writing one
-// grew with every key already there, on the request path, under the lock. The
-// shape of the curve is the defect, not any single number, so this measures the
-// shape and allows generously for a slow or loaded disk.
-func TestMintingAKeyDoesNotGetSlowerAsTheKeystoreGrows(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing test")
-	}
+// Checking the append-only layout catches a return to rewriting the keystore
+// without depending on disk timings or thousands of fsyncs.
+func TestMintingAKeyAppendsToTheJournal(t *testing.T) {
 	dir := t.TempDir()
 	k, err := OpenContentKeystore(ContentKeystorePath(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	mint := func(n, offset int) time.Duration {
-		start := time.Now()
-		for i := range n {
-			if _, _, err := k.KeyFor("", fmt.Sprintf("req-%d", offset+i)); err != nil {
-				t.Fatal(err)
-			}
+	snapshot := readFileBytes(t, k.Path())
+	var previous []byte
+	for i := range 12 {
+		if _, _, err := k.KeyFor("", fmt.Sprintf("req-%d", i)); err != nil {
+			t.Fatal(err)
 		}
-		return time.Since(start) / time.Duration(n)
-	}
-
-	const batch = 400
-	first := mint(batch, 0)
-	mint(batch*3, batch) // grow the store
-	later := mint(batch, batch*4)
-
-	// Quadratic total cost showed up here as later being several times first.
-	// A flat curve wanders a little either way, so the bar is deliberately
-	// loose: it catches a return to growth, not ordinary noise.
-	if later > first*3 {
-		t.Errorf("minting a key costs %v with a large keystore against %v with a small one, so the cost is growing with the store again", later, first)
+		journal := readFileBytes(t, contentJournalPath(k.Path()))
+		if !bytes.HasPrefix(journal, previous) || bytes.Count(journal[len(previous):], []byte{'\n'}) != 1 {
+			t.Fatal("minting a key did not append exactly one journal entry")
+		}
+		if !bytes.Equal(readFileBytes(t, k.Path()), snapshot) {
+			t.Fatal("minting a key rewrote the keystore before compaction")
+		}
+		previous = journal
 	}
 }
 

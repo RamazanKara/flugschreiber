@@ -65,7 +65,7 @@ func headFromOutput(t *testing.T, out string) string {
 
 func firstPythonBlock(t *testing.T, doc string) string {
 	t.Helper()
-	m := pyFence.FindStringSubmatch(doc)
+	m := pyFence.FindStringSubmatch(strings.ReplaceAll(doc, "\r\n", "\n"))
 	if m == nil {
 		t.Fatal("no python code block in VERIFYING.md")
 	}
@@ -85,4 +85,35 @@ func headHashFromExpected(t *testing.T) string {
 		t.Fatal("no head_hash in EXPECTED.json")
 	}
 	return string(m[1])
+}
+
+func TestVerifyingDocPreservesEventBytes(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not available")
+	}
+	doc, err := os.ReadFile(filepath.Join("..", "docs", "VERIFYING.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := "__name__ = 'reference_test'\n" + firstPythonBlock(t, string(doc)) +
+		"\nsys.stdout.buffer.write(event_span(sys.argv[1].encode('utf-8')))\n"
+	for _, tc := range []struct {
+		name  string
+		line  string
+		event string
+	}{
+		{"braces in text", `{"event":{"note":"a } then {"}}`, `{"note":"a } then {"}`},
+		{"escaped quote", `{"event":{"note":"say \"}\""},"seq":1}`, `{"note":"say \"}\""}`},
+		{"member spacing", `{ "seq": 1, "event" : { "text": "Grüße 😀" } }`, `{ "text": "Grüße 😀" }`},
+		{"nested event member", `{"metadata":{"event":{"ignored":true}},"event":{"real":true}}`, `{"real":true}`},
+		{"escaped HTML", `{"event":{"text":"\u003c\u0026\u003e"}}`, `{"text":"\u003c\u0026\u003e"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := exec.Command(python, "-c", code, tc.line).CombinedOutput()
+			if err != nil || string(out) != tc.event {
+				t.Fatalf("event_span = %q, %v; want %q", out, err, tc.event)
+			}
+		})
+	}
 }

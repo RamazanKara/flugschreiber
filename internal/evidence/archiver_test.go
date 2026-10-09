@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/RamazanKara/flugschreiber/internal/archive"
@@ -224,67 +225,69 @@ func TestFailingArchiverDoesNotBreakAppendsOrTheChain(t *testing.T) {
 // hold shutdown open beyond the timeout. The evidence directory is complete
 // either way.
 func TestStalledArchiverDoesNotStallAppendsOrShutdown(t *testing.T) {
-	dir := t.TempDir()
-	fake := newFakeArchiver()
-	fake.block = make(chan struct{})
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		fake := newFakeArchiver()
+		fake.block = make(chan struct{})
 
-	kp, err := LoadOrCreateKeyPair(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(Options{
-		Dir:                    dir,
-		SegmentMaxBytes:        400,
-		Keys:                   kp,
-		Archiver:               fake,
-		ArchiveShutdownTimeout: 50 * time.Millisecond,
-		Now:                    fixedClock(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		kp, err := LoadOrCreateKeyPair(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := Open(Options{
+			Dir:                    dir,
+			SegmentMaxBytes:        400,
+			Keys:                   kp,
+			Archiver:               fake,
+			ArchiveShutdownTimeout: 50 * time.Millisecond,
+			Now:                    fixedClock(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	appended := make(chan error, 1)
-	go func() {
-		for i := 0; i < 40; i++ {
-			if err := s.Append(&Event{EventType: EventInference, RequestID: "r", Status: 200}); err != nil {
-				appended <- err
-				return
+		appended := make(chan error, 1)
+		go func() {
+			for i := 0; i < 40; i++ {
+				if err := s.Append(&Event{EventType: EventInference, RequestID: "r", Status: 200}); err != nil {
+					appended <- err
+					return
+				}
 			}
+			appended <- nil
+		}()
+		select {
+		case err := <-appended:
+			if err != nil {
+				t.Fatalf("Append: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("appends blocked on a stalled archive")
 		}
-		appended <- nil
-	}()
-	select {
-	case err := <-appended:
-		if err != nil {
-			t.Fatalf("Append: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("appends blocked on a stalled archive")
-	}
 
-	closed := make(chan error, 1)
-	go func() { closed <- s.Close() }()
-	select {
-	case err := <-closed:
-		if err != nil {
-			t.Fatalf("Close: %v", err)
+		closed := make(chan error, 1)
+		go func() { closed <- s.Close() }()
+		select {
+		case err := <-closed:
+			if err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Close blocked on a stalled archive")
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Close blocked on a stalled archive")
-	}
-	close(fake.block)
+		close(fake.block)
 
-	res, err := Verify(dir)
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
-	if !res.OK() || res.Records != 40 {
-		t.Fatalf("a stalled archive cost records: %d records, problems %v", res.Records, res.Problems)
-	}
-	if s.ArchiveErr() == nil {
-		t.Error("uploads were abandoned at shutdown without saying so")
-	}
+		res, err := Verify(dir)
+		if err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+		if !res.OK() || res.Records != 40 {
+			t.Fatalf("a stalled archive cost records: %d records, problems %v", res.Records, res.Problems)
+		}
+		if s.ArchiveErr() == nil {
+			t.Error("uploads were abandoned at shutdown without saying so")
+		}
+	})
 }
 
 // A restart re-offers objects an earlier run already shipped. They are skipped
@@ -704,12 +707,8 @@ func readFileBytes(t *testing.T, path string) []byte {
 // a host being decommissioned has no restart. So shutdown drains the
 // timestamper before the archive and offers the anchors once more in between.
 //
-// The authority here answers slowly on purpose. That is the mechanism, not
-// incidental: the defect only exists for an anchor that lands after the
-// snapshot, and an instant answer lands before it and would make this test pass
-// against the bug. The delay is two orders of magnitude longer than draining a
-// handful of small files to a local directory, and both shutdown timeouts are
-// set far above it.
+// The authority waits until the writer has finished its shutdown snapshot so
+// the anchor always lands after it, regardless of disk or scheduler speed.
 func TestTheFinalAnchorOfARunReachesTheArchiveWithoutARestart(t *testing.T) {
 	dir := t.TempDir()
 	root := t.TempDir()
@@ -722,10 +721,10 @@ func TestTheFinalAnchorOfARunReachesTheArchiveWithoutARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const answerDelay = 300 * time.Millisecond
+	var writerDone <-chan struct{}
 	stub := newTSAStub(t)
 	stub.answer = func(t *testing.T, imprint []byte) ([]byte, error) {
-		time.Sleep(answerDelay)
+		<-writerDone
 		return timestampResponseOver(t, imprint), nil
 	}
 
@@ -743,6 +742,7 @@ func TestTheFinalAnchorOfARunReachesTheArchiveWithoutARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	writerDone = s.done
 	appendN(t, s, 12)
 
 	// One shutdown, no second start. That is the whole point of the test.

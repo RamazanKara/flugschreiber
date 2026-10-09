@@ -62,11 +62,16 @@ done
 ## Verifying from outside the cluster
 
 ```bash
-kubectl cp ai/flugschreiber-0:/var/lib/flugschreiber ./evidence-copy
-flugschreiber verify --dir ./evidence-copy
+kubectl exec -n ai deployment/flugschreiber -- \
+  flugschreiber export --dir /var/lib/flugschreiber --out - > evidence.tar.gz
+mkdir -p evidence-copy
+tar -xzf evidence.tar.gz -C evidence-copy
+flugschreiber verify --dir ./evidence-copy/flugschreiber-evidence
 ```
 
-That directory plus the binary is everything an auditor needs. No cluster
+The image has no `tar`, so `kubectl cp` cannot extract files from it. The export
+streams without a TTY and is extracted locally. That directory plus the binary
+is everything an auditor needs. No cluster
 access, no running server, and no reason to take your word for anything.
 
 `client-salt` stays in the pod. Without it a recipient can distinguish two

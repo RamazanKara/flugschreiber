@@ -7,7 +7,7 @@ type: application
 # chart was written against, and image.tag defaults to it, so the chart never
 # silently pulls a moving :latest tag.
 version: 0.1.0
-appVersion: "0.1.0"
+appVersion: "v0.7.0"
 
 home: https://github.com/RamazanKara/flugschreiber
 sources:

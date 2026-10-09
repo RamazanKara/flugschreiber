@@ -20,7 +20,7 @@ copies only the segment being written and whatever rotated since the last run.
 | `client-salt` | Separately | Losing it changes every caller's pseudonym. It is deliberately excluded from exports. |
 | `content-keys.json`, `content-keys.jsonl` | Separately, if content encryption is on | These open every sealed prompt. Losing them destroys stored content as thoroughly as an erasure. Back them up with the same care as the signing key, and remember a backup of them is a backup of every prompt they can open. |
 
-The three files in the second group are what an export deliberately withholds, so
+The signing key, salt and content keystore are what an export deliberately withholds, so
 an evidence bundle is never a backup of them. Treat their backup as a separate,
 tighter procedure than the segments.
 
@@ -63,10 +63,11 @@ records the repair in the chain; the [Kubernetes guide](tamper-evident-llm-audit
 covers running it in a pod. A repair never touches anything a checkpoint attests
 to, so it cannot remove signed evidence.
 
-Off-host archival (`archive.backend`) is a second copy on the write path rather
-than a scheduled backup: sealed segments, checkpoints, anchors and every public
-key are shipped as they rotate. It complements a backup and does not replace one,
-because it never carries `pruned.json`, `LEGAL_HOLD`, the salt or the keystore, so
-a directory rebuilt from the archive alone verifies but is not complete.
+Off-host archival (`archive.backend`) asynchronously copies sealed segments,
+checkpoint and timestamp snapshots, and public keys. It complements a backup
+and does not replace one: it never carries `pruned.json`, `LEGAL_HOLD`, the salt
+or the keystore. A restore needs the appropriate snapshots and, for a pruned
+local chain, its prune anchor; copying archive objects into a directory without
+restoring their layout is not enough to make it verifiable.
 `flugschreiber archive-verify` reports which parts an archive can and cannot
 account for.

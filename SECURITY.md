@@ -183,10 +183,11 @@ content. Treat that access as you treat write access to the directory itself.
 ## Supply chain
 
 - No external Go dependencies. `go.mod` has no `require` block.
-- Builds are reproducible: `-trimpath`, pinned Go version, no cgo.
+- Builds use `-trimpath` and disable cgo. Reproducing a release also requires
+  matching its exact toolchain, source and build metadata.
 - Release images are distroless static and published with an SBOM.
 - Release artifacts are signed with cosign (keyless, via GitHub OIDC).
-- Every release carries SLSA build provenance: an attestation, signed through
+- The release workflow generates SLSA build provenance: an attestation, signed through
   GitHub OIDC, of which workflow, commit and runner produced it. The binaries
   are covered through their checksum file and the image through its digest.
 

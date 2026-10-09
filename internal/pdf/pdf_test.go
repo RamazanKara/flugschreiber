@@ -374,7 +374,7 @@ func TestPopplerReadsTheDocument(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(tool, "-layout", path, "-").Output()
+	out, err := exec.Command(tool, "-enc", "UTF-8", "-layout", path, "-").Output()
 	if err != nil {
 		t.Fatalf("%s could not read the document: %v", tool, err)
 	}
@@ -401,7 +401,7 @@ func TestPopplerReadsTheDocument(t *testing.T) {
 	// it has to be broken across lines. Every character must still be on the
 	// page. Extraction is repeated in content order, because the column
 	// layout interleaves the continuation with the neighbouring cells.
-	raw, err := exec.Command(tool, "-raw", path, "-").Output()
+	raw, err := exec.Command(tool, "-enc", "UTF-8", "-raw", path, "-").Output()
 	if err != nil {
 		t.Fatalf("%s could not read the document in content order: %v", tool, err)
 	}

@@ -74,7 +74,9 @@ generated logs where they are under the provider's control. Failing at
 | PodDisruptionBudget | `podDisruptionBudget.enabled` |
 | ServiceMonitor / PodMonitor | `metrics.*.enabled`, guarded on the CRD |
 
-In `mode: sidecar` none of it is created. See "Sidecar topology" below.
+In `mode: sidecar` the chart does not create the central Deployment or its
+Service and PVC. Enabled verify and retention CronJobs still render and require
+`persistence.existingClaim`. See "Sidecar topology" below.
 
 ## Values
 
@@ -82,7 +84,7 @@ In `mode: sidecar` none of it is created. See "Sidecar topology" below.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `mode` | `central` | `central` renders the Deployment and everything around it. `sidecar` renders nothing and exposes only the named templates |
+| `mode` | `central` | `central` renders the Deployment and everything around it. `sidecar` exposes named templates and can render scheduled Jobs |
 | `replicas` | `1` | Must be 1. Anything else fails the render with an explanation |
 | `nameOverride` | `""` | Override the chart name in resource names |
 | `fullnameOverride` | `""` | Override the full resource name |
@@ -101,10 +103,9 @@ In `mode: sidecar` none of it is created. See "Sidecar topology" below.
 
 ### Proxy configuration
 
-Every value here is passed as a `FLUGSCHREIBER_*` environment variable, and
-also written into the ConfigMap when `config.file.enabled` is true. The
-environment wins over the file, which is why both are rendered from the same
-values and cannot disagree.
+Settings are passed through environment variables, flags or the optional
+ConfigMap. The table identifies settings that require `config.file.enabled`.
+Environment variables and flags are rendered from the same values as the file.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -468,18 +469,23 @@ The chart deploys the central topology. For the sidecar topology it exposes
 named templates that put a Flugschreiber container into a pod your own chart
 owns, so that the two topologies share defaults instead of drifting.
 
+This example assumes your parent chart sits beside `deploy/helm/flugschreiber`;
+adjust the local dependency path for another layout.
+
 ```yaml
 # Chart.yaml
 dependencies:
   - name: flugschreiber
     version: 0.1.x
-    repository: https://flugschreiber.github.io/charts
+    repository: "file://../flugschreiber"
 ```
 
 ```yaml
 # values.yaml
 flugschreiber:
-  mode: sidecar          # renders no resources of its own
+  mode: sidecar
+  verify:
+    enabled: false        # each application pod owns a different evidence claim
   config:
     upstream: http://vllm.models.svc:8000
     retentionDays: 365
@@ -558,8 +564,8 @@ and asserts that the renders which are supposed to be refused still are. It
 needs no cluster. A missing helm or kubeconform is reported and skipped rather
 than failing, so the message you get is the real one.
 
-The same script runs in CI, which is what stops the chart drifting away from
-the binary. Two of its checks are worth knowing about, because they encode
+Run this target locally when changing the chart; the main CI workflow only
+lints, tests and builds Go. Two chart checks are worth knowing about, because they encode
 promises rather than syntax: no rendered ConfigMap may contain a credential,
 and the sidecar `appEnv` must name the address `sidecar.listen` actually binds.
 

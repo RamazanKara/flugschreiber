@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -244,28 +245,32 @@ func TestEmptyLogIsNeverCheckpointed(t *testing.T) {
 }
 
 func TestIdleLogIsNotCheckpointedRepeatedly(t *testing.T) {
-	dir := t.TempDir()
-	kp, err := LoadOrCreateKeyPair(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(Options{Dir: dir, Keys: kp, CheckpointInterval: time.Millisecond, Now: fixedClock()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	appendN(t, s, 1)
-	time.Sleep(30 * time.Millisecond)
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		kp, err := LoadOrCreateKeyPair(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := Open(Options{Dir: dir, Keys: kp, CheckpointInterval: time.Millisecond, Now: fixedClock()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		appendN(t, s, 1)
+		synctest.Wait()
+		time.Sleep(30 * time.Millisecond)
+		synctest.Wait()
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
 
-	checks, err := ReadCheckpoints(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(checks) != 1 {
-		t.Fatalf("an idle log wrote %d checkpoints in 30 timer ticks, want 1", len(checks))
-	}
+		checks, err := ReadCheckpoints(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(checks) != 1 {
+			t.Fatalf("an idle log wrote %d checkpoints in 30 timer ticks, want 1", len(checks))
+		}
+	})
 }
 
 // This is the attack the hash chain alone cannot see: the whole log rewritten

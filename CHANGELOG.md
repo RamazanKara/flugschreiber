@@ -4,6 +4,22 @@ All notable changes to Flugschreiber are recorded here. The log schema has its
 own compatibility policy in [docs/SCHEMA.md](docs/SCHEMA.md); a schema change
 appears in both places or it did not happen.
 
+## v0.7.1, unreleased
+
+- Require Go 1.27.2 for patched standard-library vulnerabilities; CI, release
+  and site builds use the version in `go.mod`, and the container builder uses
+  the same patch release. Update golangci-lint to 2.14.0 for Go 1.27 support.
+  No external module dependencies were added.
+- Keep text checkouts at LF and fix Windows test cleanup, permission checks
+  and PDF text extraction. Replace disk timing and shutdown sleeps with
+  deterministic checks. Close the segment when a writer lock is refused, and
+  publish public keys without replacing a concurrent reader's file. Keep the
+  timestamp test within its bounded queue, and document the Linux latency gate.
+- Add fuzz coverage for configuration, durations and PDF Markdown alongside
+  the existing request, response, SSE, routing and evidence parser targets.
+- Document local cross-platform builds, checksums and manual releases in
+  `docs/RELEASING.md` while GitHub Actions is unavailable.
+
 ## v0.7.0, 2026-08-05
 
 - Every reading command's `--dir` falls back to `FLUGSCHREIBER_DATA_DIR`, the

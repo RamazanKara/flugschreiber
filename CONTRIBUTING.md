@@ -6,8 +6,9 @@ describing that are as valuable as code.
 
 ## Getting set up
 
-Go 1.25 or later. There is nothing to download, because there are no
-dependencies.
+Go 1.27.2 or later, GNU Make and a POSIX shell. The race detector also needs a C
+compiler. There are no external Go module dependencies. On Windows, use WSL or
+a shell and compiler toolchain such as Git Bash with MinGW-w64.
 
 ```bash
 git clone https://github.com/RamazanKara/flugschreiber
@@ -25,9 +26,12 @@ make check
 make lint           # needs golangci-lint
 ```
 
-CI runs the same things plus the acceptance demo on Linux, macOS and Windows,
-a container build that exercises the documented `docker run` command, and a grep
-that fails the build if any copy claims to confer compliance.
+The CI workflow runs formatting checks, golangci-lint, `make test` (including
+acceptance tests and the race detector) and `make build` on Linux. GitHub Actions
+is currently unavailable because of billing; use `make lint test build` locally
+as the gate. Container and Helm checks are separate local targets. See
+`docs/RELEASING.md` for the Windows gate without a C compiler,
+fuzz runs, platform limitations and manual release commands.
 
 ## What we are strict about
 
@@ -36,15 +40,15 @@ cannot be written, that surfaces. Dropping evidence under load, swallowing a
 write error, or logging a warning nobody reads are all worse than stopping.
 
 **Never claim compliance.** Not in the README, not in a doc template, not in a
-log message. Flugschreiber produces evidence and documentation inputs. CI greps
-for this, but the grep only catches phrasings we thought of.
+log message. Flugschreiber produces evidence and documentation inputs. Review
+documentation changes for claims the implementation cannot support.
 
 **The five-minute demo stays working.** `test/acceptance_test.go` is the
 definition of done. A change that breaks it needs a very good reason.
 
-**No new dependency without an entry in DECISIONS.md.** See D1 for why. CI fails
-if `go.mod` grows a `require` block. Adding one is allowed; adding one silently
-is not.
+**No new dependency without an entry in DECISIONS.md.** See D1 for why. The
+tag-triggered release workflow rejects any `require` block, so adding a
+dependency also requires a deliberate change to that gate.
 
 **Generated documents mark their gaps.** If the generator cannot fill a section
 from evidence, it emits a `TODO` with a sentence on what belongs there. Never
@@ -76,8 +80,9 @@ functions:
   transitive closure of `internal/evidence`, not just its internal edges,
   because the ways to grow that closure are all convenient.
 
-Everything runs against the built-in mock upstream. No test needs a GPU, a model
-server, or a network.
+Tests use the built-in mock upstream and local HTTP servers. No test needs a
+GPU, an external model server or internet access. The reference-verifier test
+needs `python3` and skips when it is unavailable.
 
 Write tests that fail when the feature is removed. Before you push, break the
 implementation on purpose and watch the test go red. A test that passes against

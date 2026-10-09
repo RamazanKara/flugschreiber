@@ -6,8 +6,7 @@ want to: software supplied by that party is not what you validate their evidence
 with. This document is the whole format, written so you can reimplement the
 check in any language in an afternoon.
 
-The reference implementation at the end is about forty lines of Python and
-depends on nothing outside its standard library.
+The reference implementation at the end uses only the Python standard library.
 
 ## What you are checking
 
@@ -24,14 +23,15 @@ A Flugschreiber evidence directory, or an exported bundle, contains:
 
 There are three independent checks, in increasing order of what they establish.
 
-1. **The hash chain.** Every record commits to the one before it, so no record
-   can be altered, inserted or removed without breaking the chain from that
-   point on.
+1. **The hash chain.** Every record commits to the one before it. Altering a
+   record breaks the chain unless the affected hashes are recomputed. A valid
+   chain alone cannot detect a full rewrite or removal of its tail.
 2. **The checkpoint signatures.** Each checkpoint is signed and names a chain
    head. A log rewritten without the signing key cannot produce checkpoints that
    both verify and agree with the rewritten records.
-3. **The checkpoint chain.** Checkpoints commit to each other, so a checkpoint
-   cannot be removed without leaving a gap.
+3. **The checkpoint chain.** Checkpoints commit to each other, exposing gaps
+   between retained checkpoints. Detecting removal of the tail needs an
+   independently retained head.
 
 You can perform check 1 with nothing but SHA-256. Checks 2 and 3 add Ed25519.
 
@@ -64,7 +64,7 @@ wrong produces a false accusation of tampering rather than an obvious failure, s
 it is worth stating three times:
 
 - Do not parse the event and re-serialise it. Take the raw substring.
-- The writer escapes `<`, `>` and `&` as `<`, `>` and `&`. A
+- The writer escapes `<`, `>` and `&` as `\u003c`, `\u003e` and `\u0026`. A
   reader that decodes and re-encodes will produce the literal characters instead
   and compute a different digest, and will then report tampering on any prompt
   that contained HTML, code or an ampersand.
@@ -73,9 +73,9 @@ it is worth stating three times:
   valid.
 
 Most JSON libraries expose the raw span: Go has `json.RawMessage`, Rust's serde
-has `&RawValue`, Python's `json` gives you positions through `raw_decode`, and in
-the worst case a scan for `"event":` followed by a brace-matching walk is a dozen
-lines and exact.
+has `&RawValue`, and Python's `json` gives you positions through `raw_decode`.
+A manual scanner must distinguish top-level members and handle escaped quotes
+and braces inside strings.
 
 Then check the links:
 
@@ -85,9 +85,9 @@ Then check the links:
 - `seq` starts at 1 (or at the pruned-through sequence plus one) and increases by
   one with no gaps, across segment boundaries.
 
-If all of that holds, the log is internally consistent: nothing has been altered,
-inserted or removed since it was written. What it does not yet establish is who
-wrote it, which is what the signatures are for.
+If all of that holds, the log is internally consistent. Establishing who wrote
+it, or detecting a rewrite with recomputed hashes, requires checkpoint signatures
+and a trusted public key. Detecting a removed tail also needs a retained head.
 
 ## Check 2: the checkpoint signatures
 
@@ -174,9 +174,9 @@ step is deliberately left to your tools.
 
 ## A reference implementation
 
-This checks the hash chain and the checkpoint signatures for a directory. It is
-deliberately small and dependency-free. `cryptography` is used only for Ed25519;
-drop the checkpoint section to check the chain with the standard library alone.
+This checks only the hash chain, using the Python standard library. It does not
+verify checkpoint signatures, the checkpoint chain, prune-anchor signatures or
+timestamp tokens; those require the additional checks described above.
 
 ```python
 import glob, hashlib, json, os, sys
@@ -191,18 +191,27 @@ def record_hash(seq, ts, prev, event_bytes):
     return hashlib.sha256(pre).hexdigest()
 
 def event_span(line):
-    # The raw bytes of the event member, taken from the line as written.
-    key = line.index(b'"event":') + len(b'"event":')
-    depth, i = 0, key
-    while i < len(line):
-        c = line[i:i+1]
-        if c == b'{': depth += 1
-        elif c == b'}':
-            depth -= 1
-            if depth == 0:
-                return line[key:i+1]
+    text = line.decode("utf-8")
+    decoder = json.JSONDecoder()
+    i = text.index("{") + 1
+    while True:
+        while text[i].isspace() or text[i] == ",":
+            i += 1
+        if text[i] == "}":
+            break
+        key, i = decoder.raw_decode(text, i)
+        while text[i].isspace():
+            i += 1
+        if text[i] != ":":
+            raise ValueError("missing member separator")
         i += 1
-    raise ValueError("unterminated event object")
+        while text[i].isspace():
+            i += 1
+        start = i
+        _, i = decoder.raw_decode(text, i)
+        if key == "event":
+            return text[start:i].encode("utf-8")
+    raise ValueError("missing event member")
 
 def check_chain(directory):
     prev = "0" * 64
